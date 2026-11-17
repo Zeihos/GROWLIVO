@@ -1,0 +1,17 @@
+name: Verify GROWLIVO source and installer
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify-installer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check embedded game scripts
+        run: python3 tools/check_installer.py
