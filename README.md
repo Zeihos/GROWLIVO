@@ -1,23 +1,31 @@
 <div align="center">
-  <img src="assets/branding/logo.png" width="140" alt="GROWLIVO — логотип">
 
-  # GROWLIVO
+<img src="assets/branding/logo.png" alt="Логотип GROWLIVO" width="136">
 
-  **Кликай. Прокачивайся. Открывай новые миры.**
+<h1>GROWLIVO</h1>
 
-  Многопользовательский Clicker Simulator на платформе Roblox.
+<p><strong>Кликай. Прокачивайся. Открывай новые миры.</strong></p>
+<p>Многопользовательский Clicker Simulator на платформе Roblox</p>
 
-  <p>
-    <img src="https://img.shields.io/badge/Версия-Alpha_0.9.26-9879E9?style=for-the-badge&labelColor=15182C" alt="Alpha 0.9.26">
-    <img src="https://img.shields.io/badge/Платформа-Roblox-2196F3?style=for-the-badge&labelColor=15182C" alt="Roblox">
-    <img src="https://img.shields.io/badge/Язык-Luau-37C4BE?style=for-the-badge&labelColor=15182C" alt="Luau">
-  </p>
+<p>
+  <img src="https://img.shields.io/badge/Версия-Alpha_0.9.26-9879E9?style=for-the-badge&labelColor=15182C" alt="Версия Alpha 0.9.26">
+  <img src="https://img.shields.io/badge/Платформа-Roblox-2196F3?style=for-the-badge&labelColor=15182C" alt="Roblox">
+  <img src="https://img.shields.io/badge/Язык-Luau-37C4BE?style=for-the-badge&labelColor=15182C" alt="Luau">
+</p>
 
-  [![Проверка исходников](https://github.com/Zeihos/GROWLIVO/actions/workflows/verify-installer.yml/badge.svg?branch=main)](https://github.com/Zeihos/GROWLIVO/actions/workflows/verify-installer.yml)
+<p>
+  <a href="https://github.com/Zeihos/GROWLIVO/actions/workflows/verify-installer.yml"><img src="https://github.com/Zeihos/GROWLIVO/actions/workflows/verify-installer.yml/badge.svg?branch=main" alt="Статус проверки исходников"></a>
+</p>
 
-  <img src="assets/branding/cover.jpg" alt="Фирменная обложка GROWLIVO" width="100%">
+<img src="assets/branding/cover.jpg" alt="Фирменная обложка GROWLIVO" width="100%">
 
-  **[Возможности](#возможности) · [Установка](#установка) · [Исходники](#структура-проекта) · [Обратная связь](#обратная-связь)**
+<p>
+  <a href="#возможности">Возможности</a> ·
+  <a href="#установка">Установка</a> ·
+  <a href="#структура-проекта">Исходники</a> ·
+  <a href="#обратная-связь">Обратная связь</a>
+</p>
+
 </div>
 
 ---
@@ -95,11 +103,16 @@ GROWLIVO/
 
 ### Для разработчиков
 
-Основной код находится в `src/`. В установщик встроены копии всех 24 скриптов, поэтому изменения нужно синхронизировать с `installer/INSTALLER_CommandBar.lua`.
+Основной код находится в `src/`. В установщик встроены копии всех 24 скриптов. После изменения исходников обнови установщик автоматической командой:
 
 ~~~bash
+python3 tools/sync_installer.py --write
 python3 tools/check_installer.py
 ~~~
+
+Команда без `--write` ничего не меняет: `python3 tools/sync_installer.py --check` проверяет совпадение копий. При добавлении нового скрипта сначала укажи его имя, класс и место установки в списке `packages` внутри установщика.
+
+Дополнительно: [как предложить изменения](CONTRIBUTING.md) и [как сообщить об уязвимости](SECURITY.md).
 
 Проверка GitHub Actions подтверждает соответствие файлов, **но не является тестированием внутри Roblox Studio**.
 
@@ -129,6 +142,8 @@ python3 tools/check_installer.py
 **[Сообщить об ошибке](../../issues/new?template=bug_report.yml) · [Предложить улучшение](../../issues/new?template=feature_request.yml) · [Все обращения](../../issues)**
 
 Не публикуй в открытых обращениях токены, пароли и личные данные.
+
+**Правовой статус:** репозиторий публичный, но отдельная лицензия на использование исходного кода пока не опубликована. Не воспринимай публичный доступ как автоматическое разрешение на перепубликацию или коммерческое использование.
 
 ---
 

@@ -13,5 +13,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Check embedded game scripts
+      - name: Check Python tooling
+        run: python3 -m compileall -q tools
+      - name: Verify installer and sources
         run: python3 tools/check_installer.py
+      - name: Verify reproducible installer
+        run: python3 tools/sync_installer.py --check

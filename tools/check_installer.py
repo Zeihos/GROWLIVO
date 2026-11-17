@@ -48,8 +48,12 @@ def verify() -> None:
     extra = sorted(set(sources) - seen)
     if extra:
         raise AssertionError(f"Sources missing from installer: {', '.join(extra)}")
-    if len(matches) != 24:
-        raise AssertionError(f"Expected 24 game packages; got {len(matches)}")
+    if len(matches) != len(sources):
+        raise AssertionError(
+            f"Installer/source count differs: {len(matches)} / {len(sources)}"
+        )
+    if package_text.count("source=[==[") != len(matches):
+        raise AssertionError("Malformed package source block(s) in installer")
     version_match = re.search(r'Config\.Version\s*=\s*"([^"]+)"',
                               CONFIG.read_text(encoding="utf-8"))
     if not version_match:
