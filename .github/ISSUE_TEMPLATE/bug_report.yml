@@ -1,0 +1,52 @@
+name: "Ошибка в GROWLIVO"
+description: "Сообщить об ошибке во время игры или тестирования"
+title: "[Ошибка] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за помощь GROWLIVO! Заполни описание по-русски.
+        Не публикуй пароли, токены и личные данные.
+  - type: input
+    id: version
+    attributes:
+      label: Версия игры
+      placeholder: Alpha 0.9.26
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: Где возникла ошибка?
+      options:
+        - Клики и экономика
+        - Питомцы и яйца
+        - Миры и телепортация
+        - Сохранения
+        - Интерфейс
+        - Задания и события
+        - Другое
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести?
+      description: Опиши последовательность действий и то, что произошло
+      placeholder: |
+        1. Запустил Play
+        2. Нажал ...
+        3. Получил ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Что должно было произойти?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output, скриншоты или дополнительные сведения
+      description: Прикрепляй только данные, которыми можно делиться публично

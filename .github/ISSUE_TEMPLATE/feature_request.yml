@@ -1,0 +1,27 @@
+name: "Предложение для GROWLIVO"
+description: "Предложить механику, улучшение интерфейса или игровую идею"
+title: "[Идея] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Расскажи, что сделает GROWLIVO интереснее и удобнее. Можно писать по-русски.
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Что предлагаешь?
+      description: Кратко опиши функцию или изменение
+    validations:
+      required: true
+  - type: textarea
+    id: benefit
+    attributes:
+      label: Чем это поможет игрокам?
+      description: Для чего нужна идея?
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: Примеры и дополнительные детали
+      description: Необязательно — можно приложить изображения или ссылки
