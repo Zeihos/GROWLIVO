@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.25 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.26 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.25
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.26
 local Config = {}
-Config.Version = "Alpha 0.9.25"
+Config.Version = "Alpha 0.9.26"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -23,6 +23,18 @@ Config.MaxClicksPerSecond = 8
 -- Free progression feature: 2 rebirths unlocks 1 server-owned tap every 2 sec.
 -- Session toggle only: no purchases, no client-supplied tap counts, no new save fields.
 Config.AutoTap = {UnlockRebirths = 2, IntervalSeconds = 2}
+-- Server-only streaks from accepted manual taps; no new persistent fields.
+Config.TapCombo = {WindowSeconds = 2.5, MaxStreak = 50,
+    Tiers = {{Taps = 10, Multiplier = 1.10}, {Taps = 25, Multiplier = 1.25},
+        {Taps = 50, Multiplier = 1.50}}}
+function Config.TapComboMultiplier(taps)
+    local count = math.max(0, math.floor(tonumber(taps) or 0))
+    local factor = 1
+    for _, tier in ipairs(Config.TapCombo.Tiers) do
+        if count >= tier.Taps then factor = tier.Multiplier end
+    end
+    return factor
+end
 -- Per-player Action RemoteEvent capacity and refill rate. On top of action-specific cooldowns.
 Config.RemoteBurstCapacity = 30
 Config.RemoteTokensPerSecond = 20
@@ -624,7 +636,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.24
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.26
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -691,6 +703,23 @@ local runeSessions = {}
 -- Auto tap state is session-only and keyed by player. Server controls all awards.
 local autoTapEnabled = {}
 local nextAutoTap = {}
+-- Per-session combo: the client cannot submit streak counts or reward amounts.
+local tapCombos = {}
+local function recordManualCombo(player)
+    local now = os.clock()
+    local state = tapCombos[player]
+    if not state or now - state.LastTap >= Config.TapCombo.WindowSeconds then
+        state = {Count = 0, LastTap = now}
+        tapCombos[player] = state
+    end
+    state.Count = math.min(Config.TapCombo.MaxStreak, state.Count + 1)
+    state.LastTap = now
+    local factor = Config.TapComboMultiplier(state.Count)
+    player:SetAttribute("TapComboCount", state.Count)
+    player:SetAttribute("TapComboMultiplier", factor)
+    player:SetAttribute("TapComboExpiresAt", workspace:GetServerTimeNow() + Config.TapCombo.WindowSeconds)
+    return factor
+end
 local function runeSession(player)
     local state = runeSessions[player]
     if not state then
@@ -1570,7 +1599,9 @@ end
 
 -- Shared award path for manual and automatic taps. Neither accepts client amounts.
 -- Update all quests, events, tutorial progress, and persistence through this path.
-local function awardTap(player, p)
+local function awardTap(player, p, manual)
+    -- Auto taps use base power and never add to a manual streak.
+    local comboMultiplier = manual and recordManualCombo(player) or 1
     local dayChanged = resetDaily(p)
     local weekChanged = resetWeekly(p)
     local world = Config.FindWorld(p.World) or Config.Worlds[1]
@@ -1578,6 +1609,7 @@ local function awardTap(player, p)
     local power = Config.ClickPower(p.TapLevel, p.Rebirths,
         Config.PetBonus(p.Pets, p.Equipped), world.Multiplier)
         * eventMultiplier * runeBoostFor(player, p.World)
+    power = math.max(1, math.floor(power * comboMultiplier))
     if active and not p.StarfallClaimed then
         p.StarfallProgress = math.min(Config.Starfall.Goal, p.StarfallProgress + 1)
         if p.StarfallProgress % 10 == 0 or p.StarfallProgress == Config.Starfall.Goal then
@@ -1644,7 +1676,7 @@ local function handleAction(player, actionName, argument)
         local now = os.clock()
         if now - (lastClick[player] or -100) < 1 / Config.MaxClicksPerSecond then return end
         lastClick[player] = now
-        awardTap(player, p)
+        awardTap(player, p, true)
         return
     end
     local now = os.clock()
@@ -1948,6 +1980,9 @@ local function onJoin(player)
     player:SetAttribute("DataMode", Storage.Mode)
     player:SetAttribute("AutoTapEnabled", false)
     player:SetAttribute("AutoTapUnlocked", false)
+    player:SetAttribute("TapComboCount", 0)
+    player:SetAttribute("TapComboMultiplier", 1)
+    player:SetAttribute("TapComboExpiresAt", 0)
     player:SetAttribute("ChestDay", dayUTC())
     player:SetAttribute("ChestClaimed", false)
     player:SetAttribute("RuneCount", 0)
@@ -2045,7 +2080,7 @@ Players.PlayerRemoving:Connect(function(player)
     eventQueued[player], lastEvent[player] = nil, nil
     nextAutosave[player], recoveringSave[player], retryAttempts[player] = nil, nil, nil
     remoteBuckets[player], pendingTeleport[player], runeSessions[player] = nil, nil, nil
-    autoTapEnabled[player], nextAutoTap[player] = nil, nil
+    autoTapEnabled[player], nextAutoTap[player], tapCombos[player] = nil, nil, nil
     -- Preserve finalizing[player] == "Done" for a concurrently running BindToClose.
     -- Weak player keys release this marker automatically after the Player is GC'd.
 end)
@@ -2055,6 +2090,16 @@ end)
 task.spawn(function()
     while task.wait(0.25) do
         local now = os.clock()
+        for player, state in pairs(tapCombos) do
+            if state.Count > 0 and now - state.LastTap >= Config.TapCombo.WindowSeconds then
+                state.Count = 0
+                if player.Parent == Players then
+                    player:SetAttribute("TapComboCount", 0)
+                    player:SetAttribute("TapComboMultiplier", 1)
+                    player:SetAttribute("TapComboExpiresAt", 0)
+                end
+            end
+        end
         for player, enabled in pairs(autoTapEnabled) do
             if enabled and now >= (nextAutoTap[player] or math.huge) then
                 nextAutoTap[player] = now + Config.AutoTap.IntervalSeconds
@@ -2064,7 +2109,7 @@ task.spawn(function()
                     local character = player.Character
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     if humanoid and humanoid.Health > 0 then
-                        awardTap(player, p)
+                        awardTap(player, p, false)
                     end
                 end
             end
@@ -2762,7 +2807,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.23
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.26
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3489,6 +3534,47 @@ local function cameraChanged()
 end
 cameraChanged()
 workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(cameraChanged)
+
+-- Alpha 0.9.26: display server-confirmed manual tap streak without client rewards.
+local comboHud = Instance.new("TextLabel")
+comboHud.Name = "TapCombo"
+comboHud.AnchorPoint = Vector2.new(0.5, 0)
+comboHud.Position = UDim2.new(0.5, 0, 0, 160)
+comboHud.Size = UDim2.fromOffset(280, 32)
+comboHud.BackgroundColor3 = PANEL
+comboHud.BackgroundTransparency = 0.12
+comboHud.BorderSizePixel = 0
+comboHud.Font = Enum.Font.GothamBold
+comboHud.TextColor3 = GOLD
+comboHud.TextSize = 13
+comboHud.TextWrapped = true
+comboHud.Visible = false
+comboHud.Parent = gui
+rounded(comboHud, 10)
+outlined(comboHud, GOLD, 1)
+local function refreshCombo()
+    local count = tonumber(player:GetAttribute("TapComboCount")) or 0
+    local multiplier = tonumber(player:GetAttribute("TapComboMultiplier")) or 1
+    local expiry = tonumber(player:GetAttribute("TapComboExpiresAt")) or 0
+    local remain = math.max(0, expiry - workspace:GetServerTimeNow())
+    comboHud.Visible = player:GetAttribute("DataReady") == true and count > 0 and remain > 0
+    if not comboHud.Visible then return end
+    local camera = workspace.CurrentCamera
+    local w = camera and camera.ViewportSize.X or 900
+    comboHud.Size = UDim2.fromOffset(math.min(280, math.max(180, w - 24)), 32)
+    comboHud.Text = "⚡ КОМБО " .. count .. " ×" .. string.format("%.2f", multiplier)
+        .. " • " .. string.format("%.1f", remain) .. " с"
+end
+for _, field in ipairs({"TapComboCount", "TapComboMultiplier", "TapComboExpiresAt", "DataReady"}) do
+    player:GetAttributeChangedSignal(field):Connect(refreshCombo)
+end
+task.spawn(function()
+    while gui.Parent do
+        refreshCombo()
+        task.wait(comboHud.Visible and 0.15 or 0.5)
+    end
+end)
+refreshCombo()
 ]==]},
     {name="GrowlivoPetsVisual", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Nine distinctive low-poly pet follower silhouettes / Alpha 0.9.14
 -- StarterPlayer > StarterPlayerScripts > GrowlivoPetsVisual [LocalScript]
@@ -6390,4 +6476,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.25 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.26 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")

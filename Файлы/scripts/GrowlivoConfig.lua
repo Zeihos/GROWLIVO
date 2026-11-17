@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.25
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.26
 local Config = {}
-Config.Version = "Alpha 0.9.25"
+Config.Version = "Alpha 0.9.26"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -14,6 +14,18 @@ Config.MaxClicksPerSecond = 8
 -- Free progression feature: 2 rebirths unlocks 1 server-owned tap every 2 sec.
 -- Session toggle only: no purchases, no client-supplied tap counts, no new save fields.
 Config.AutoTap = {UnlockRebirths = 2, IntervalSeconds = 2}
+-- Server-only streaks from accepted manual taps; no new persistent fields.
+Config.TapCombo = {WindowSeconds = 2.5, MaxStreak = 50,
+    Tiers = {{Taps = 10, Multiplier = 1.10}, {Taps = 25, Multiplier = 1.25},
+        {Taps = 50, Multiplier = 1.50}}}
+function Config.TapComboMultiplier(taps)
+    local count = math.max(0, math.floor(tonumber(taps) or 0))
+    local factor = 1
+    for _, tier in ipairs(Config.TapCombo.Tiers) do
+        if count >= tier.Taps then factor = tier.Multiplier end
+    end
+    return factor
+end
 -- Per-player Action RemoteEvent capacity and refill rate. On top of action-specific cooldowns.
 Config.RemoteBurstCapacity = 30
 Config.RemoteTokensPerSecond = 20

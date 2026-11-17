@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.24
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.26
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -65,6 +65,23 @@ local runeSessions = {}
 -- Auto tap state is session-only and keyed by player. Server controls all awards.
 local autoTapEnabled = {}
 local nextAutoTap = {}
+-- Per-session combo: the client cannot submit streak counts or reward amounts.
+local tapCombos = {}
+local function recordManualCombo(player)
+    local now = os.clock()
+    local state = tapCombos[player]
+    if not state or now - state.LastTap >= Config.TapCombo.WindowSeconds then
+        state = {Count = 0, LastTap = now}
+        tapCombos[player] = state
+    end
+    state.Count = math.min(Config.TapCombo.MaxStreak, state.Count + 1)
+    state.LastTap = now
+    local factor = Config.TapComboMultiplier(state.Count)
+    player:SetAttribute("TapComboCount", state.Count)
+    player:SetAttribute("TapComboMultiplier", factor)
+    player:SetAttribute("TapComboExpiresAt", workspace:GetServerTimeNow() + Config.TapCombo.WindowSeconds)
+    return factor
+end
 local function runeSession(player)
     local state = runeSessions[player]
     if not state then
@@ -944,7 +961,9 @@ end
 
 -- Shared award path for manual and automatic taps. Neither accepts client amounts.
 -- Update all quests, events, tutorial progress, and persistence through this path.
-local function awardTap(player, p)
+local function awardTap(player, p, manual)
+    -- Auto taps use base power and never add to a manual streak.
+    local comboMultiplier = manual and recordManualCombo(player) or 1
     local dayChanged = resetDaily(p)
     local weekChanged = resetWeekly(p)
     local world = Config.FindWorld(p.World) or Config.Worlds[1]
@@ -952,6 +971,7 @@ local function awardTap(player, p)
     local power = Config.ClickPower(p.TapLevel, p.Rebirths,
         Config.PetBonus(p.Pets, p.Equipped), world.Multiplier)
         * eventMultiplier * runeBoostFor(player, p.World)
+    power = math.max(1, math.floor(power * comboMultiplier))
     if active and not p.StarfallClaimed then
         p.StarfallProgress = math.min(Config.Starfall.Goal, p.StarfallProgress + 1)
         if p.StarfallProgress % 10 == 0 or p.StarfallProgress == Config.Starfall.Goal then
@@ -1018,7 +1038,7 @@ local function handleAction(player, actionName, argument)
         local now = os.clock()
         if now - (lastClick[player] or -100) < 1 / Config.MaxClicksPerSecond then return end
         lastClick[player] = now
-        awardTap(player, p)
+        awardTap(player, p, true)
         return
     end
     local now = os.clock()
@@ -1322,6 +1342,9 @@ local function onJoin(player)
     player:SetAttribute("DataMode", Storage.Mode)
     player:SetAttribute("AutoTapEnabled", false)
     player:SetAttribute("AutoTapUnlocked", false)
+    player:SetAttribute("TapComboCount", 0)
+    player:SetAttribute("TapComboMultiplier", 1)
+    player:SetAttribute("TapComboExpiresAt", 0)
     player:SetAttribute("ChestDay", dayUTC())
     player:SetAttribute("ChestClaimed", false)
     player:SetAttribute("RuneCount", 0)
@@ -1419,7 +1442,7 @@ Players.PlayerRemoving:Connect(function(player)
     eventQueued[player], lastEvent[player] = nil, nil
     nextAutosave[player], recoveringSave[player], retryAttempts[player] = nil, nil, nil
     remoteBuckets[player], pendingTeleport[player], runeSessions[player] = nil, nil, nil
-    autoTapEnabled[player], nextAutoTap[player] = nil, nil
+    autoTapEnabled[player], nextAutoTap[player], tapCombos[player] = nil, nil, nil
     -- Preserve finalizing[player] == "Done" for a concurrently running BindToClose.
     -- Weak player keys release this marker automatically after the Player is GC'd.
 end)
@@ -1429,6 +1452,16 @@ end)
 task.spawn(function()
     while task.wait(0.25) do
         local now = os.clock()
+        for player, state in pairs(tapCombos) do
+            if state.Count > 0 and now - state.LastTap >= Config.TapCombo.WindowSeconds then
+                state.Count = 0
+                if player.Parent == Players then
+                    player:SetAttribute("TapComboCount", 0)
+                    player:SetAttribute("TapComboMultiplier", 1)
+                    player:SetAttribute("TapComboExpiresAt", 0)
+                end
+            end
+        end
         for player, enabled in pairs(autoTapEnabled) do
             if enabled and now >= (nextAutoTap[player] or math.huge) then
                 nextAutoTap[player] = now + Config.AutoTap.IntervalSeconds
@@ -1438,7 +1471,7 @@ task.spawn(function()
                     local character = player.Character
                     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
                     if humanoid and humanoid.Health > 0 then
-                        awardTap(player, p)
+                        awardTap(player, p, false)
                     end
                 end
             end

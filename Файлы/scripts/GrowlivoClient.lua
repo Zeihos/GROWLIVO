@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.23
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.26
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -725,3 +725,44 @@ local function cameraChanged()
 end
 cameraChanged()
 workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(cameraChanged)
+
+-- Alpha 0.9.26: display server-confirmed manual tap streak without client rewards.
+local comboHud = Instance.new("TextLabel")
+comboHud.Name = "TapCombo"
+comboHud.AnchorPoint = Vector2.new(0.5, 0)
+comboHud.Position = UDim2.new(0.5, 0, 0, 160)
+comboHud.Size = UDim2.fromOffset(280, 32)
+comboHud.BackgroundColor3 = PANEL
+comboHud.BackgroundTransparency = 0.12
+comboHud.BorderSizePixel = 0
+comboHud.Font = Enum.Font.GothamBold
+comboHud.TextColor3 = GOLD
+comboHud.TextSize = 13
+comboHud.TextWrapped = true
+comboHud.Visible = false
+comboHud.Parent = gui
+rounded(comboHud, 10)
+outlined(comboHud, GOLD, 1)
+local function refreshCombo()
+    local count = tonumber(player:GetAttribute("TapComboCount")) or 0
+    local multiplier = tonumber(player:GetAttribute("TapComboMultiplier")) or 1
+    local expiry = tonumber(player:GetAttribute("TapComboExpiresAt")) or 0
+    local remain = math.max(0, expiry - workspace:GetServerTimeNow())
+    comboHud.Visible = player:GetAttribute("DataReady") == true and count > 0 and remain > 0
+    if not comboHud.Visible then return end
+    local camera = workspace.CurrentCamera
+    local w = camera and camera.ViewportSize.X or 900
+    comboHud.Size = UDim2.fromOffset(math.min(280, math.max(180, w - 24)), 32)
+    comboHud.Text = "⚡ КОМБО " .. count .. " ×" .. string.format("%.2f", multiplier)
+        .. " • " .. string.format("%.1f", remain) .. " с"
+end
+for _, field in ipairs({"TapComboCount", "TapComboMultiplier", "TapComboExpiresAt", "DataReady"}) do
+    player:GetAttributeChangedSignal(field):Connect(refreshCombo)
+end
+task.spawn(function()
+    while gui.Parent do
+        refreshCombo()
+        task.wait(comboHud.Visible and 0.15 or 0.5)
+    end
+end)
+refreshCombo()
