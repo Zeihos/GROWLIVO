@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.24
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.25
 local Config = {}
-Config.Version = "Alpha 0.9.24"
+Config.Version = "Alpha 0.9.25"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
