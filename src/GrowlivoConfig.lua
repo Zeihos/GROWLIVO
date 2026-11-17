@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.26
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.27
 local Config = {}
-Config.Version = "Alpha 0.9.26"
+Config.Version = "Alpha 0.9.27"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -34,6 +34,7 @@ Config.MaxClickBalance = 1000000000000
 Config.MaxTotalClicks = 9000000000000000
 Config.MaxGems = 1000000000
 Config.MaxTapLevel = 50
+Config.BulkUpgradeCount = 5 -- fixed server-owned batch size; clients never choose arbitrary counts
 Config.MaxRebirths = 1000
 Config.MaxPetInventory = 60
 Config.MaxHatchBatch = 3
@@ -201,6 +202,23 @@ end
 function Config.UpgradeCost(level)
     if level >= Config.MaxTapLevel then return nil end
     return math.floor(25 * (1.55 ^ (level - 1)))
+end
+-- Quote from the SAME per-level price function used by ordinary upgrades.
+-- Near the cap, a x5 purchase buys only the remaining levels.
+-- Returns nil,0 when no upgrades remain or an invalid batch is requested.
+function Config.UpgradeBundleCost(level, requested)
+    if typeof(level) ~= "number" or level ~= level then return nil, 0 end
+    if requested ~= 1 and requested ~= Config.BulkUpgradeCount then return nil, 0 end
+    local first = math.max(1, math.floor(level))
+    local levels = math.min(requested, Config.MaxTapLevel - first)
+    if levels <= 0 then return nil, 0 end
+    local total = 0
+    for index = 0, levels - 1 do
+        local price = Config.UpgradeCost(first + index)
+        if not price then return nil, 0 end
+        total += price
+    end
+    return total, levels
 end
 function Config.RebirthCost(rebirths)
     if rebirths >= Config.MaxRebirths then return nil end

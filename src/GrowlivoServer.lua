@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.26
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.27
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -1061,18 +1061,27 @@ local function handleAction(player, actionName, argument)
             p.Settings[argument.Key] = argument.Value
             changed = true
         end
-    elseif actionName == "Upgrade" then
-        local cost = Config.UpgradeCost(p.TapLevel)
-        if not cost then notify(player, "Сила клика максимальная")
-        elseif p.Clicks < cost then notify(player, "Не хватает кликов")
+    elseif actionName == "Upgrade" or actionName == "Upgrade5" then
+        -- Never accept a client-supplied number or price. Determine the entire
+        -- batch cost here, then charge and award it as one atomic transaction.
+        local requested = actionName == "Upgrade5" and Config.BulkUpgradeCount or 1
+        local cost, levels = Config.UpgradeBundleCost(p.TapLevel, requested)
+        if not cost then
+            notify(player, "Сила клика максимальная")
+        elseif p.Clicks < cost then
+            notify(player, "Не хватает кликов для " .. levels .. " улучшений")
         else
             p.Clicks -= cost
-            p.TapLevel += 1
-            countError("UpgradesBought")
-            addQuest(p, "Upgrade")
+            p.TapLevel += levels
+            -- Each purchased level counts for quests and telemetry, even when
+            -- the whole batch is persisted with a single dirty snapshot.
+            for _ = 1, levels do
+                countError("UpgradesBought")
+                addQuest(p, "Upgrade")
+            end
             tutorialAdvance(player, p, "Upgrade")
             changed, progressChanged = true, true
-            notify(player, "Улучшение приобретено")
+            notify(player, "Приобретено улучшений: " .. levels)
         end
     elseif actionName == "Rebirth" then
         local cost = Config.RebirthCost(p.Rebirths)

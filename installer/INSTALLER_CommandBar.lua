@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.26 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.27 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.26
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.27
 local Config = {}
-Config.Version = "Alpha 0.9.26"
+Config.Version = "Alpha 0.9.27"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -43,6 +43,7 @@ Config.MaxClickBalance = 1000000000000
 Config.MaxTotalClicks = 9000000000000000
 Config.MaxGems = 1000000000
 Config.MaxTapLevel = 50
+Config.BulkUpgradeCount = 5 -- fixed server-owned batch size; clients never choose arbitrary counts
 Config.MaxRebirths = 1000
 Config.MaxPetInventory = 60
 Config.MaxHatchBatch = 3
@@ -210,6 +211,23 @@ end
 function Config.UpgradeCost(level)
     if level >= Config.MaxTapLevel then return nil end
     return math.floor(25 * (1.55 ^ (level - 1)))
+end
+-- Quote from the SAME per-level price function used by ordinary upgrades.
+-- Near the cap, a x5 purchase buys only the remaining levels.
+-- Returns nil,0 when no upgrades remain or an invalid batch is requested.
+function Config.UpgradeBundleCost(level, requested)
+    if typeof(level) ~= "number" or level ~= level then return nil, 0 end
+    if requested ~= 1 and requested ~= Config.BulkUpgradeCount then return nil, 0 end
+    local first = math.max(1, math.floor(level))
+    local levels = math.min(requested, Config.MaxTapLevel - first)
+    if levels <= 0 then return nil, 0 end
+    local total = 0
+    for index = 0, levels - 1 do
+        local price = Config.UpgradeCost(first + index)
+        if not price then return nil, 0 end
+        total += price
+    end
+    return total, levels
 end
 function Config.RebirthCost(rebirths)
     if rebirths >= Config.MaxRebirths then return nil end
@@ -636,7 +654,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.26
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.27
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -1699,18 +1717,27 @@ local function handleAction(player, actionName, argument)
             p.Settings[argument.Key] = argument.Value
             changed = true
         end
-    elseif actionName == "Upgrade" then
-        local cost = Config.UpgradeCost(p.TapLevel)
-        if not cost then notify(player, "Сила клика максимальная")
-        elseif p.Clicks < cost then notify(player, "Не хватает кликов")
+    elseif actionName == "Upgrade" or actionName == "Upgrade5" then
+        -- Never accept a client-supplied number or price. Determine the entire
+        -- batch cost here, then charge and award it as one atomic transaction.
+        local requested = actionName == "Upgrade5" and Config.BulkUpgradeCount or 1
+        local cost, levels = Config.UpgradeBundleCost(p.TapLevel, requested)
+        if not cost then
+            notify(player, "Сила клика максимальная")
+        elseif p.Clicks < cost then
+            notify(player, "Не хватает кликов для " .. levels .. " улучшений")
         else
             p.Clicks -= cost
-            p.TapLevel += 1
-            countError("UpgradesBought")
-            addQuest(p, "Upgrade")
+            p.TapLevel += levels
+            -- Each purchased level counts for quests and telemetry, even when
+            -- the whole batch is persisted with a single dirty snapshot.
+            for _ = 1, levels do
+                countError("UpgradesBought")
+                addQuest(p, "Upgrade")
+            end
             tutorialAdvance(player, p, "Upgrade")
             changed, progressChanged = true, true
-            notify(player, "Улучшение приобретено")
+            notify(player, "Приобретено улучшений: " .. levels)
         end
     elseif actionName == "Rebirth" then
         local cost = Config.RebirthCost(p.Rebirths)
@@ -2807,7 +2834,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.26
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.27
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -2927,6 +2954,7 @@ end
 local actions = frame("ActionPanel", gui, PANEL)
 outlined(actions, GOLD)
 local upgrade = button("Upgrade", actions, "УЛУЧШИТЬ", BLUE)
+local bulkUpgrade = button("Upgrade5", actions, "⚡ ×5", BLUE)
 local rebirth = button("Rebirth", actions, "ПЕРЕРОЖДЕНИЕ", GOLD)
 local petsButton = button("Pets", gui, "🐾 ПИТОМЦЫ", BLUE)
 local autoTapButton = button("AutoTap", gui, "🤖 АВТОКЛИК", GOLD)
@@ -3265,6 +3293,9 @@ local function update()
     statFields.Pets.Text = "🐾 Питомцы: " .. pretty(attr("PetCount")) .. "  |  бонус +" .. pretty(attr("PetBonus")) .. "%"
     local cost = Config.UpgradeCost(attr("TapLevel"))
     upgrade.Text = cost and ("⚡ УЛУЧШИТЬ\n" .. pretty(cost) .. " кликов") or "МАКС. УРОВЕНЬ"
+    local total, levels = Config.UpgradeBundleCost(attr("TapLevel"), Config.BulkUpgradeCount)
+    bulkUpgrade.Text = total and ("⚡ ×" .. levels .. "\n" .. pretty(total)) or "МАКС."
+    bulkUpgrade.BackgroundColor3 = total and attr("Clicks") >= total and BLUE or MUTED
     local costR = Config.RebirthCost(attr("Rebirths"))
     rebirth.Text = costR and ("🔄 ПЕРЕРОДИТЬСЯ\n" .. pretty(costR) .. " кликов") or "МАКС. ПЕРЕРОЖДЕНИЯ"
     clickButton.Text = "+" .. pretty(attr("ClickPower")) .. " КЛИК"
@@ -3326,10 +3357,12 @@ local function resize()
         actions.Position = UDim2.new(0, 12, 1, -10)
         actions.Size = UDim2.new(1, -24, 0, 66)
         upgrade.Position = UDim2.new(0, 7, 0, 7)
-        upgrade.Size = UDim2.new(0.5, -10, 1, -14)
+        upgrade.Size = UDim2.new(0.30, -5, 1, -14)
+        bulkUpgrade.Position = UDim2.new(0.30, 2, 0, 7)
+        bulkUpgrade.Size = UDim2.new(0.20, -5, 1, -14)
         rebirth.Position = UDim2.new(0.5, 3, 0, 7)
         rebirth.Size = UDim2.new(0.5, -10, 1, -14)
-        upgrade.TextSize, rebirth.TextSize = 12, 12
+        upgrade.TextSize, bulkUpgrade.TextSize, rebirth.TextSize = 10, 10, 12
         petsButton.Position = UDim2.new(1, -12, 0, compact and 163 or 187)
         petsButton.AnchorPoint = Vector2.new(1, 0)
         petsButton.Size = UDim2.fromOffset(math.min(w - 24, 162), 43)
@@ -3364,10 +3397,12 @@ local function resize()
         actions.Position = UDim2.new(1, -18, 0, 58)
         actions.Size = UDim2.fromOffset(245, 171)
         upgrade.Position = UDim2.fromOffset(9, 9)
-        upgrade.Size = UDim2.new(1, -18, 0, 72)
+        upgrade.Size = UDim2.new(0.62, -11, 0, 72)
+        bulkUpgrade.Position = UDim2.new(0.62, 0, 0, 9)
+        bulkUpgrade.Size = UDim2.new(0.38, -9, 0, 72)
         rebirth.Position = UDim2.fromOffset(9, 90)
         rebirth.Size = UDim2.new(1, -18, 0, 72)
-        upgrade.TextSize, rebirth.TextSize = 15, 15
+        upgrade.TextSize, bulkUpgrade.TextSize, rebirth.TextSize = 13, 12, 15
         petsButton.AnchorPoint = Vector2.new(1, 0)
         petsButton.Position = UDim2.new(1, -18, 0, 239)
         petsButton.Size = UDim2.fromOffset(245, 50)
@@ -3440,6 +3475,9 @@ UserInputService.InputBegan:Connect(function(input, handled)
 end)
 upgrade.Activated:Connect(function()
     if ready() then Action:FireServer("Upgrade") end
+end)
+bulkUpgrade.Activated:Connect(function()
+    if ready() then Action:FireServer("Upgrade5") end
 end)
 rebirth.Activated:Connect(function()
     if ready() then Action:FireServer("Rebirth") end
@@ -6476,4 +6514,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.26 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.27 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")

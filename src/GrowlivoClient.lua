@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.26
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.27
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -118,6 +118,7 @@ end
 local actions = frame("ActionPanel", gui, PANEL)
 outlined(actions, GOLD)
 local upgrade = button("Upgrade", actions, "УЛУЧШИТЬ", BLUE)
+local bulkUpgrade = button("Upgrade5", actions, "⚡ ×5", BLUE)
 local rebirth = button("Rebirth", actions, "ПЕРЕРОЖДЕНИЕ", GOLD)
 local petsButton = button("Pets", gui, "🐾 ПИТОМЦЫ", BLUE)
 local autoTapButton = button("AutoTap", gui, "🤖 АВТОКЛИК", GOLD)
@@ -456,6 +457,9 @@ local function update()
     statFields.Pets.Text = "🐾 Питомцы: " .. pretty(attr("PetCount")) .. "  |  бонус +" .. pretty(attr("PetBonus")) .. "%"
     local cost = Config.UpgradeCost(attr("TapLevel"))
     upgrade.Text = cost and ("⚡ УЛУЧШИТЬ\n" .. pretty(cost) .. " кликов") or "МАКС. УРОВЕНЬ"
+    local total, levels = Config.UpgradeBundleCost(attr("TapLevel"), Config.BulkUpgradeCount)
+    bulkUpgrade.Text = total and ("⚡ ×" .. levels .. "\n" .. pretty(total)) or "МАКС."
+    bulkUpgrade.BackgroundColor3 = total and attr("Clicks") >= total and BLUE or MUTED
     local costR = Config.RebirthCost(attr("Rebirths"))
     rebirth.Text = costR and ("🔄 ПЕРЕРОДИТЬСЯ\n" .. pretty(costR) .. " кликов") or "МАКС. ПЕРЕРОЖДЕНИЯ"
     clickButton.Text = "+" .. pretty(attr("ClickPower")) .. " КЛИК"
@@ -517,10 +521,12 @@ local function resize()
         actions.Position = UDim2.new(0, 12, 1, -10)
         actions.Size = UDim2.new(1, -24, 0, 66)
         upgrade.Position = UDim2.new(0, 7, 0, 7)
-        upgrade.Size = UDim2.new(0.5, -10, 1, -14)
+        upgrade.Size = UDim2.new(0.30, -5, 1, -14)
+        bulkUpgrade.Position = UDim2.new(0.30, 2, 0, 7)
+        bulkUpgrade.Size = UDim2.new(0.20, -5, 1, -14)
         rebirth.Position = UDim2.new(0.5, 3, 0, 7)
         rebirth.Size = UDim2.new(0.5, -10, 1, -14)
-        upgrade.TextSize, rebirth.TextSize = 12, 12
+        upgrade.TextSize, bulkUpgrade.TextSize, rebirth.TextSize = 10, 10, 12
         petsButton.Position = UDim2.new(1, -12, 0, compact and 163 or 187)
         petsButton.AnchorPoint = Vector2.new(1, 0)
         petsButton.Size = UDim2.fromOffset(math.min(w - 24, 162), 43)
@@ -555,10 +561,12 @@ local function resize()
         actions.Position = UDim2.new(1, -18, 0, 58)
         actions.Size = UDim2.fromOffset(245, 171)
         upgrade.Position = UDim2.fromOffset(9, 9)
-        upgrade.Size = UDim2.new(1, -18, 0, 72)
+        upgrade.Size = UDim2.new(0.62, -11, 0, 72)
+        bulkUpgrade.Position = UDim2.new(0.62, 0, 0, 9)
+        bulkUpgrade.Size = UDim2.new(0.38, -9, 0, 72)
         rebirth.Position = UDim2.fromOffset(9, 90)
         rebirth.Size = UDim2.new(1, -18, 0, 72)
-        upgrade.TextSize, rebirth.TextSize = 15, 15
+        upgrade.TextSize, bulkUpgrade.TextSize, rebirth.TextSize = 13, 12, 15
         petsButton.AnchorPoint = Vector2.new(1, 0)
         petsButton.Position = UDim2.new(1, -18, 0, 239)
         petsButton.Size = UDim2.fromOffset(245, 50)
@@ -631,6 +639,9 @@ UserInputService.InputBegan:Connect(function(input, handled)
 end)
 upgrade.Activated:Connect(function()
     if ready() then Action:FireServer("Upgrade") end
+end)
+bulkUpgrade.Activated:Connect(function()
+    if ready() then Action:FireServer("Upgrade5") end
 end)
 rebirth.Activated:Connect(function()
     if ready() then Action:FireServer("Rebirth") end
