@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.27
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.29
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -1061,13 +1061,20 @@ local function handleAction(player, actionName, argument)
             p.Settings[argument.Key] = argument.Value
             changed = true
         end
-    elseif actionName == "Upgrade" or actionName == "Upgrade5" then
+    elseif actionName == "Upgrade" or actionName == "Upgrade5"
+        or actionName == "UpgradeMax" then
         -- Never accept a client-supplied number or price. Determine the entire
         -- batch cost here, then charge and award it as one atomic transaction.
-        local requested = actionName == "Upgrade5" and Config.BulkUpgradeCount or 1
-        local cost, levels = Config.UpgradeBundleCost(p.TapLevel, requested)
+        local cost, levels
+        if actionName == "UpgradeMax" then
+            cost, levels = Config.UpgradeAffordableCost(p.TapLevel, p.Clicks)
+        else
+            local requested = actionName == "Upgrade5" and Config.BulkUpgradeCount or 1
+            cost, levels = Config.UpgradeBundleCost(p.TapLevel, requested)
+        end
         if not cost then
-            notify(player, "Сила клика максимальная")
+            notify(player, p.TapLevel >= Config.MaxTapLevel
+                and "Сила клика максимальная" or "Не хватает кликов")
         elseif p.Clicks < cost then
             notify(player, "Не хватает кликов для " .. levels .. " улучшений")
         else

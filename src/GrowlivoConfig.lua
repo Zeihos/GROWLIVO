@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.28
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.29
 local Config = {}
-Config.Version = "Alpha 0.9.28"
+Config.Version = "Alpha 0.9.29"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -218,6 +218,26 @@ function Config.UpgradeBundleCost(level, requested)
         if not price then return nil, 0 end
         total += price
     end
+    return total, levels
+end
+-- Purchase the maximum affordable number of levels at the usual per-level
+-- prices. Server passes its own balance; the client can only display a quote.
+function Config.UpgradeAffordableCost(level, balance)
+    if typeof(level) ~= "number" or level ~= level
+        or typeof(balance) ~= "number" or balance ~= balance
+        or balance == math.huge or balance == -math.huge then
+        return nil, 0
+    end
+    local first = math.clamp(math.floor(level), 1, Config.MaxTapLevel)
+    local funds = math.max(0, math.floor(balance))
+    local total, levels = 0, 0
+    for current = first, Config.MaxTapLevel - 1 do
+        local price = Config.UpgradeCost(current)
+        if not price or price > funds - total then break end
+        total += price
+        levels += 1
+    end
+    if levels == 0 then return nil, 0 end
     return total, levels
 end
 function Config.RebirthCost(rebirths)
