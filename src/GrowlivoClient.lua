@@ -287,8 +287,9 @@ local function syncPetTabUI()
         sortButton.Text = sortNames[sortMode]
         equippedFilter.Text = equippedOnly and "НАДЕТЫ" or "ВСЕ"
     end
-    equippedFilter.BackgroundColor3 = (isCatalog and catalogOwnedOnly)
-        or (not isCatalog and equippedOnly) and BLUE or GOLD
+    local highlighted = (isCatalog and catalogOwnedOnly)
+        or (not isCatalog and equippedOnly)
+    equippedFilter.BackgroundColor3 = highlighted and BLUE or GOLD
     best.Visible = not isCatalog
     unequip.Visible = not isCatalog
 end
