@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.27
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.28
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -186,6 +186,13 @@ inventoryTitle.Position = UDim2.new(0, 12, 0, 160)
 inventoryTitle.Size = UDim2.new(1, -24, 0, 28)
 inventoryTitle.TextXAlignment = Enum.TextXAlignment.Left
 inventoryTitle.ZIndex = 12
+-- Dedicated tab within the existing pet window, not a second overlay.
+local catalogButton = button("PetCatalog", modal, "📖 КАТАЛОГ", GOLD)
+catalogButton.AnchorPoint = Vector2.new(1, 0)
+catalogButton.Position = UDim2.new(1, -12, 0, 160)
+catalogButton.Size = UDim2.new(0.31, -4, 0, 28)
+catalogButton.TextSize = 11
+catalogButton.ZIndex = 12
 
 -- Client-side inventory tools: these never alter saved pets or the server economy.
 local search = Instance.new("TextBox")
@@ -255,6 +262,10 @@ unequip.ZIndex = 12
 local currentPets = {}
 local currentEquipped = {}
 local petsDirty = true
+-- This is a CURRENT ownership index, not a permanent discovery log.
+local petsTab = "Inventory"
+local catalogWorld = 0 -- zero means all worlds
+local catalogOwnedOnly = false
 local pendingReleaseId = nil
 local pendingReleaseButton = nil
 local pendingReleaseNonce = 0
@@ -264,6 +275,23 @@ local pendingFuseNonce = 0
 local sortMode = "Power" -- Power / New / Old
 local equippedOnly = false
 local sortNames = {Power = "СИЛА ↓", New = "НОВЫЕ", Old = "СТАРЫЕ"}
+local catalogWorldNames = {"НЕБО", "КРИСТ.", "РОЩА"}
+local function syncPetTabUI()
+    local isCatalog = petsTab == "Catalog"
+    catalogButton.Text = isCatalog and "🐾 СПИСОК" or "📖 КАТАЛОГ"
+    search.PlaceholderText = isCatalog and "Поиск по каталогу" or "Поиск питомца"
+    if isCatalog then
+        sortButton.Text = catalogWorld == 0 and "ВСЕ 🌍" or (catalogWorldNames[catalogWorld] or "МИР")
+        equippedFilter.Text = catalogOwnedOnly and "МОИ" or "ВСЕ"
+    else
+        sortButton.Text = sortNames[sortMode]
+        equippedFilter.Text = equippedOnly and "НАДЕТЫ" or "ВСЕ"
+    end
+    equippedFilter.BackgroundColor3 = (isCatalog and catalogOwnedOnly)
+        or (not isCatalog and equippedOnly) and BLUE or GOLD
+    best.Visible = not isCatalog
+    unequip.Visible = not isCatalog
+end
 -- Lua string.lower handles ASCII but not Cyrillic. Small explicit mapping keeps
 -- Russian-name searches case-insensitive without any external dependencies.
 local uppercase = {"А","Б","В","Г","Д","Е","Ё","Ж","З","И","Й","К","Л","М","Н","О","П","Р","С","Т","У","Ф","Х","Ц","Ч","Ш","Щ","Ъ","Ы","Ь","Э","Ю","Я"}
@@ -291,12 +319,84 @@ local function clearFuseConfirmation()
     pendingFuseButton = nil
     pendingFuseNonce += 1
 end
+
+-- Catalog derives its information from the shared world/egg definitions and
+-- the server-published current inventory. No reward or persistence requests.
+local function repaintPetCatalog()
+    local owned = {}
+    for _, pet in ipairs(currentPets) do
+        if Config.FindPet(pet.Species) then
+            owned[pet.Species] = (owned[pet.Species] or 0) + 1
+        end
+    end
+    local unique = 0
+    for _ in pairs(owned) do unique += 1 end
+    inventoryTitle.Text = modal.Size.X.Offset < 420
+        and string.format("В НАЛИЧИИ: %d/%d", unique, #Config.Pets)
+        or string.format("ВИДОВ В ИНВЕНТАРЕ: %d/%d", unique, #Config.Pets)
+    local query = normalizeSearch(search.Text)
+    local rowIndex = 0
+    for worldIndex, world in ipairs(Config.Worlds) do
+        if catalogWorld == 0 or catalogWorld == worldIndex then
+            local egg = Config.Eggs[world.EggId]
+            if egg then
+                for _, drop in ipairs(egg.Drops) do
+                    local info = Config.FindPet(drop.Species)
+                    local quantity = owned[drop.Species] or 0
+                    if info and (not catalogOwnedOnly or quantity > 0) then
+                        local searchable = normalizeSearch(info.Name .. " " .. info.Rarity
+                            .. " " .. info.Id .. " " .. world.Name .. " " .. egg.Name)
+                        if query == "" or string.find(searchable, query, 1, true) then
+                            rowIndex += 1
+                            local row = frame("Catalog_" .. info.Id, scroll, PANEL)
+                            row.Size = UDim2.new(1, -4, 0, 89)
+                            row.LayoutOrder = rowIndex
+                            row.ZIndex = 13
+                            local name = text("Name", row, info.Name
+                                .. (quantity > 0 and " ✓" or ""), 14, info.Color)
+                            name.Position = UDim2.fromOffset(9, 3)
+                            name.Size = UDim2.new(1, -18, 0, 25)
+                            name.TextXAlignment = Enum.TextXAlignment.Left
+                            name.ZIndex = 14
+                            local detail = text("Details", row, info.Rarity .. "  •  +"
+                                .. info.Bonus .. "%  •  " .. world.Name, 11, MUTED)
+                            detail.Position = UDim2.fromOffset(9, 27)
+                            detail.Size = UDim2.new(1, -18, 0, 28)
+                            detail.TextXAlignment = Enum.TextXAlignment.Left
+                            detail.ZIndex = 14
+                            local source = text("Drop", row, "🥚 " .. egg.Name .. "  •  "
+                                .. drop.Chance .. "%  •  "
+                                .. (quantity > 0 and "Есть: " .. quantity or "Пока нет"),
+                                11, quantity > 0 and BLUE or MUTED)
+                            source.Position = UDim2.fromOffset(9, 53)
+                            source.Size = UDim2.new(1, -18, 0, 31)
+                            source.TextXAlignment = Enum.TextXAlignment.Left
+                            source.ZIndex = 14
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if rowIndex == 0 then
+        local empty = frame("CatalogEmpty", scroll, DARK)
+        empty.Size = UDim2.new(1, -4, 0, 58)
+        empty.ZIndex = 13
+        local hint = text("Hint", empty, "По этим фильтрам питомцев нет", 13, MUTED)
+        hint.ZIndex = 14
+    end
+end
+
 local function repaintPets()
     petsDirty = false
     clearReleaseConfirmation() -- destroyed row buttons must not retain confirmations
     clearFuseConfirmation()
     for _, child in ipairs(scroll:GetChildren()) do
         if child:IsA("Frame") then child:Destroy() end
+    end
+    if petsTab == "Catalog" then
+        repaintPetCatalog()
+        return
     end
     local marked = {}
     for _, id in ipairs(currentEquipped) do marked[id] = true end
@@ -325,8 +425,11 @@ local function repaintPets()
         if powerA == powerB then return a.Id < b.Id end
         return powerA > powerB
     end)
-    inventoryTitle.Text = string.format("ИНВЕНТАРЬ: %d/%d | НАДЕТО: %d/%d | ПОКАЗАНО: %d",
-        #currentPets, Config.MaxPetInventory, #currentEquipped, Config.MaxEquippedPets, #visiblePets)
+    inventoryTitle.Text = modal.Size.X.Offset < 420
+        and string.format("🐾 %d/%d • %d/%d", #currentPets, Config.MaxPetInventory,
+            #currentEquipped, Config.MaxEquippedPets)
+        or string.format("ИНВЕНТАРЬ: %d/%d | НАДЕТО: %d/%d",
+            #currentPets, Config.MaxPetInventory, #currentEquipped, Config.MaxEquippedPets)
     if #visiblePets == 0 then
         local empty = frame("Empty", scroll, DARK)
         empty.Size = UDim2.new(1, -4, 0, 55)
@@ -593,6 +696,7 @@ local function resize()
     if compactPets then
         odds.Visible = false
         inventoryTitle.Position = UDim2.fromOffset(12, 113)
+        catalogButton.Position = UDim2.new(1, -12, 0, 113)
         search.Position = UDim2.new(0, 12, 0, 145)
         sortButton.Position = UDim2.new(0.49, 6, 0, 145)
         equippedFilter.Position = UDim2.new(0.745, 2, 0, 145)
@@ -601,11 +705,18 @@ local function resize()
     else
         odds.Visible = true
         inventoryTitle.Position = UDim2.fromOffset(12, 160)
+        catalogButton.Position = UDim2.new(1, -12, 0, 160)
         search.Position = UDim2.new(0, 12, 0, 190)
         sortButton.Position = UDim2.new(0.49, 6, 0, 190)
         equippedFilter.Position = UDim2.new(0.745, 2, 0, 190)
         scroll.Position = UDim2.new(0, 12, 0, 231)
         scroll.Size = UDim2.new(1, -24, 1, -298)
+    end
+    inventoryTitle.Size = UDim2.new(0.69, -12, 0, 28)
+    catalogButton.TextSize = modal.Size.X.Offset < 420 and 10 or 11
+    -- The catalog has no equip controls at the bottom.
+    if petsTab == "Catalog" then
+        scroll.Size = UDim2.new(1, -24, 1, compactPets and -194 or -240)
     end
 end
 
@@ -649,6 +760,7 @@ end)
 local function openPets()
     player:SetAttribute("CompactMenuOpen", false)
     shade.Visible = true
+    syncPetTabUI()
     if petsDirty then repaintPets() end
     if ready() then Action:FireServer("GetPets") end
 end
@@ -681,15 +793,29 @@ local function updateFilter()
     if shade.Visible then repaintPets() end
 end
 search:GetPropertyChangedSignal("Text"):Connect(updateFilter)
+catalogButton.Activated:Connect(function()
+    petsTab = petsTab == "Inventory" and "Catalog" or "Inventory"
+    search.Text = ""
+    syncPetTabUI()
+    resize()
+    updateFilter()
+end)
 sortButton.Activated:Connect(function()
-    sortMode = sortMode == "Power" and "New" or (sortMode == "New" and "Old" or "Power")
-    sortButton.Text = sortNames[sortMode]
+    if petsTab == "Catalog" then
+        catalogWorld = (catalogWorld + 1) % (#Config.Worlds + 1)
+    else
+        sortMode = sortMode == "Power" and "New" or (sortMode == "New" and "Old" or "Power")
+    end
+    syncPetTabUI()
     updateFilter()
 end)
 equippedFilter.Activated:Connect(function()
-    equippedOnly = not equippedOnly
-    equippedFilter.Text = equippedOnly and "НАДЕТЫ" or "ВСЕ"
-    equippedFilter.BackgroundColor3 = equippedOnly and BLUE or GOLD
+    if petsTab == "Catalog" then
+        catalogOwnedOnly = not catalogOwnedOnly
+    else
+        equippedOnly = not equippedOnly
+    end
+    syncPetTabUI()
     updateFilter()
 end)
 Feedback.OnClientEvent:Connect(function(info)

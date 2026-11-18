@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: Версия игры
-      placeholder: Alpha 0.9.27
+      placeholder: Alpha 0.9.28
     validations:
       required: true
   - type: dropdown
