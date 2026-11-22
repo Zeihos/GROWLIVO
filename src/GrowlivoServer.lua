@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.35
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.36
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -859,15 +859,19 @@ local function hatch(player, p, quantity, silent)
         p.HatchedTotal = math.min(Config.MaxTotalClicks, p.HatchedTotal + 1)
         addQuest(p, "Hatch")
         countError("EggsOpened")
-        -- Ten simultaneous hatch effects overwhelm lower-end mobile devices.
-        -- Keep the visual burst to the existing triple-hatch limit; all pets,
-        -- per-egg quests and achievements are still processed on the server.
-        if not isMax or i <= Config.MaxHatchBatch then
+        -- Keep the cinematic effect for manual hatches only. Auto hatch
+        -- happens every 12 seconds and must never block movement or tapping.
+        -- MAX hatches still display at most three cinematics per operation.
+        if not silent and (not isMax or i <= Config.MaxHatchBatch) then
             VisualEvent:FireClient(player, {Type = "Hatch", Species = selected.Id})
         end
     end
     tutorialAdvance(player, p, "Hatch")
-    if not silent then
+    if silent then
+        -- A compact nonblocking HUD toast replaces the fullscreen hatch FX.
+        -- The pet, price, quest progress and save path are otherwise identical.
+        notify(player, "🤖 Автояйцо: " .. results[1].Name)
+    else
         notify(player, quantity == 1 and ("Новый питомец: " .. results[1].Name)
             or ("Открыто яиц: " .. quantity .. "! Инвентарь обновлён"))
     end

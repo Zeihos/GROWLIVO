@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.35
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.36
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -672,11 +672,20 @@ local function refreshEgg()
         attr("PetCount"), attr("NextPetId"))
     hatchMax.Text = maxCost and ("🥚 ×" .. maxCount .. "\n" .. pretty(maxCost))
         or "🥚 MAX\nНЕТ"
-    local available = maxCost ~= nil and player:GetAttribute("DataReady") == true
+    -- The same server-owned quote determines whether ×1, ×3, MAX can run.
+    -- Disable impossible buys instead of sending predictable rejected remotes.
+    local readyToBuy = player:GetAttribute("DataReady") == true
         and player:GetAttribute("DataStatus") == "Ready"
-    hatchMax.Active = available
-    hatchMax.AutoButtonColor = available
-    hatchMax.BackgroundColor3 = available and GOLD or MUTED
+    for _, entry in ipairs({
+        {Button = hatch, Count = 1, Color = BLUE},
+        {Button = hatch3, Count = Config.MaxHatchBatch, Color = GOLD},
+        {Button = hatchMax, Count = 1, Color = GOLD},
+    }) do
+        local available = readyToBuy and maxCount >= entry.Count
+        entry.Button.Active = available
+        entry.Button.AutoButtonColor = available
+        entry.Button.BackgroundColor3 = available and entry.Color or MUTED
+    end
     local pieces = {}
     for _, drop in ipairs(egg.Drops) do
         local pet = Config.FindPet(drop.Species)
@@ -935,10 +944,10 @@ close.Activated:Connect(function()
     shade.Visible = false
 end)
 hatch.Activated:Connect(function()
-    if ready() then Action:FireServer("Hatch") end
+    if ready() and hatch.Active then Action:FireServer("Hatch") end
 end)
 hatch3.Activated:Connect(function()
-    if ready() then Action:FireServer("Hatch3") end
+    if ready() and hatch3.Active then Action:FireServer("Hatch3") end
 end)
 hatchMax.Activated:Connect(function()
     if ready() and hatchMax.Active then Action:FireServer("HatchMax") end

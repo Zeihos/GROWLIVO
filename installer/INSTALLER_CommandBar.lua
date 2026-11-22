@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.35 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.36 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.35
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.36
 local Config = {}
-Config.Version = "Alpha 0.9.35"
+Config.Version = "Alpha 0.9.36"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -777,7 +777,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.35
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.36
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -1638,15 +1638,19 @@ local function hatch(player, p, quantity, silent)
         p.HatchedTotal = math.min(Config.MaxTotalClicks, p.HatchedTotal + 1)
         addQuest(p, "Hatch")
         countError("EggsOpened")
-        -- Ten simultaneous hatch effects overwhelm lower-end mobile devices.
-        -- Keep the visual burst to the existing triple-hatch limit; all pets,
-        -- per-egg quests and achievements are still processed on the server.
-        if not isMax or i <= Config.MaxHatchBatch then
+        -- Keep the cinematic effect for manual hatches only. Auto hatch
+        -- happens every 12 seconds and must never block movement or tapping.
+        -- MAX hatches still display at most three cinematics per operation.
+        if not silent and (not isMax or i <= Config.MaxHatchBatch) then
             VisualEvent:FireClient(player, {Type = "Hatch", Species = selected.Id})
         end
     end
     tutorialAdvance(player, p, "Hatch")
-    if not silent then
+    if silent then
+        -- A compact nonblocking HUD toast replaces the fullscreen hatch FX.
+        -- The pet, price, quest progress and save path are otherwise identical.
+        notify(player, "🤖 Автояйцо: " .. results[1].Name)
+    else
         notify(player, quantity == 1 and ("Новый питомец: " .. results[1].Name)
             or ("Открыто яиц: " .. quantity .. "! Инвентарь обновлён"))
     end
@@ -3079,7 +3083,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.35
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.36
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3753,11 +3757,20 @@ local function refreshEgg()
         attr("PetCount"), attr("NextPetId"))
     hatchMax.Text = maxCost and ("🥚 ×" .. maxCount .. "\n" .. pretty(maxCost))
         or "🥚 MAX\nНЕТ"
-    local available = maxCost ~= nil and player:GetAttribute("DataReady") == true
+    -- The same server-owned quote determines whether ×1, ×3, MAX can run.
+    -- Disable impossible buys instead of sending predictable rejected remotes.
+    local readyToBuy = player:GetAttribute("DataReady") == true
         and player:GetAttribute("DataStatus") == "Ready"
-    hatchMax.Active = available
-    hatchMax.AutoButtonColor = available
-    hatchMax.BackgroundColor3 = available and GOLD or MUTED
+    for _, entry in ipairs({
+        {Button = hatch, Count = 1, Color = BLUE},
+        {Button = hatch3, Count = Config.MaxHatchBatch, Color = GOLD},
+        {Button = hatchMax, Count = 1, Color = GOLD},
+    }) do
+        local available = readyToBuy and maxCount >= entry.Count
+        entry.Button.Active = available
+        entry.Button.AutoButtonColor = available
+        entry.Button.BackgroundColor3 = available and entry.Color or MUTED
+    end
     local pieces = {}
     for _, drop in ipairs(egg.Drops) do
         local pet = Config.FindPet(drop.Species)
@@ -4016,10 +4029,10 @@ close.Activated:Connect(function()
     shade.Visible = false
 end)
 hatch.Activated:Connect(function()
-    if ready() then Action:FireServer("Hatch") end
+    if ready() and hatch.Active then Action:FireServer("Hatch") end
 end)
 hatch3.Activated:Connect(function()
-    if ready() then Action:FireServer("Hatch3") end
+    if ready() and hatch3.Active then Action:FireServer("Hatch3") end
 end)
 hatchMax.Activated:Connect(function()
     if ready() and hatchMax.Active then Action:FireServer("HatchMax") end
@@ -7087,4 +7100,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.35 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.36 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
