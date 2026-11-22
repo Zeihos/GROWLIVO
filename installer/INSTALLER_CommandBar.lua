@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.30 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.31 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.30
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.31
 local Config = {}
-Config.Version = "Alpha 0.9.30"
+Config.Version = "Alpha 0.9.31"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -702,7 +702,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.30
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.31
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -1626,15 +1626,14 @@ end
 -- Fusion is an atomic server-side inventory exchange, with no client-provided
 -- pet IDs or target rarity. Equipped pets are protected, and no reward counter
 -- is incremented: fusion is not a hatch and gives no quest progress.
-local function fusePets(player, p, requestedSpecies)
+-- Both the regular and MAX actions use a single transactional mutation.
+-- MAX takes every complete group of UNEQUIPPED duplicates of ONE species;
+-- no chain fusion, client-selected count, or client-selected target is allowed.
+local function fusePets(player, p, requestedSpecies, fuseMax)
     if typeof(requestedSpecies) ~= "string" or #requestedSpecies > 40 then return false end
     local result = Config.FusionResult(requestedSpecies)
     if not result then
         notify(player, "Этот питомец достиг высшей ступени слияния")
-        return false
-    end
-    if p.NextPetId > MAX_PET_ID then
-        notify(player, "Достигнут лимит ID питомцев")
         return false
     end
     local protected = {}
@@ -1643,26 +1642,38 @@ local function fusePets(player, p, requestedSpecies)
     for index, item in ipairs(p.Pets) do
         if item.Species == requestedSpecies and not protected[item.Id] then
             table.insert(indexes, index)
-            if #indexes == Config.FusionRequired then break end
+            if not fuseMax and #indexes == Config.FusionRequired then break end
         end
     end
-    if #indexes ~= Config.FusionRequired then
+    local batches = math.floor(#indexes / Config.FusionRequired)
+    if batches < 1 then
         notify(player, "Нужно 3 одинаковых СНЯТЫХ питомца для слияния")
         return false
     end
-    -- Remove from the end so earlier indices cannot shift under us.
-    for i = #indexes, 1, -1 do
+    -- Existing inventory cap bounds MAX batches (60 pets -> at most 20).
+    -- Refuse the whole operation if new unique pet IDs would overflow.
+    if p.NextPetId + batches - 1 > MAX_PET_ID then
+        notify(player, "Недостаточно свободных ID питомцев для слияния")
+        return false
+    end
+    -- Remove exactly the required source pets, descending by array index.
+    -- Unused duplicates and all equipped pets remain untouched.
+    for i = batches * Config.FusionRequired, 1, -1 do
         table.remove(p.Pets, indexes[i])
     end
-    local newId = p.NextPetId
-    p.NextPetId += 1
-    table.insert(p.Pets, {Id = newId, Species = result.Id})
-    if #p.Equipped < Config.MaxEquippedPets then
-        table.insert(p.Equipped, newId)
+    for _ = 1, batches do
+        local newId = p.NextPetId
+        p.NextPetId += 1
+        table.insert(p.Pets, {Id = newId, Species = result.Id})
+        if #p.Equipped < Config.MaxEquippedPets then
+            table.insert(p.Equipped, newId)
+        end
+        countError("PetsFused")
     end
-    countError("PetsFused")
+    -- A single visual event prevents a burst of hatch/fusion effects.
     VisualEvent:FireClient(player, {Type = "Fusion", Species = result.Id})
-    notify(player, "Слияние успешно! Получен: " .. result.Name)
+    notify(player, "Слияние ×" .. batches .. " — получен: " .. result.Name
+        .. " (" .. batches .. " шт.)")
     return true
 end
 
@@ -1827,8 +1838,8 @@ local function handleAction(player, actionName, argument)
     elseif actionName == "ReleasePet" then
         changed = releasePet(player, p, argument)
         petsChanged = changed
-    elseif actionName == "FusePets" then
-        changed = fusePets(player, p, argument)
+    elseif actionName == "FusePets" or actionName == "FusePetsMax" then
+        changed = fusePets(player, p, argument, actionName == "FusePetsMax")
         petsChanged = changed
     elseif actionName == "ClaimEvent" then
         -- Claim is possible after the active window, but only before UTC midnight.
@@ -2892,7 +2903,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.30
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.31
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3166,6 +3177,8 @@ local pendingReleaseButton = nil
 local pendingReleaseNonce = 0
 local pendingFuseSpecies = nil
 local pendingFuseButton = nil
+local pendingFuseAction = nil
+local pendingFuseLabel = nil
 local pendingFuseNonce = 0
 local sortMode = "Power" -- Power / New / Old
 local equippedOnly = false
@@ -3209,11 +3222,38 @@ local function clearReleaseConfirmation()
 end
 local function clearFuseConfirmation()
     if pendingFuseButton and pendingFuseButton.Parent then
-        pendingFuseButton.Text = "✨ СЛИТЬ"
+        pendingFuseButton.Text = pendingFuseLabel or "✨ СЛИТЬ"
     end
     pendingFuseSpecies = nil
     pendingFuseButton = nil
+    pendingFuseAction = nil
+    pendingFuseLabel = nil
     pendingFuseNonce += 1
+end
+-- A local two-tap confirmation is for accidental-click protection only.
+-- The server rechecks pet ownership, equipment and limits on every action.
+local function confirmFusion(targetButton, species, action)
+    if pendingFuseButton == targetButton and pendingFuseSpecies == species
+        and pendingFuseAction == action then
+        clearFuseConfirmation()
+        Action:FireServer(action, species)
+        targetButton.Text = "..."
+        targetButton.Active = false
+        return
+    end
+    clearReleaseConfirmation()
+    clearFuseConfirmation()
+    pendingFuseButton = targetButton
+    pendingFuseSpecies = species
+    pendingFuseAction = action
+    pendingFuseLabel = targetButton.Text
+    targetButton.Text = "ТОЧНО?"
+    local nonce = pendingFuseNonce
+    task.delay(4, function()
+        if pendingFuseNonce == nonce and pendingFuseButton == targetButton then
+            clearFuseConfirmation()
+        end
+    end)
 end
 
 -- Catalog derives its information from the shared world/egg definitions and
@@ -3391,7 +3431,7 @@ local function repaintPets()
             rarity.ZIndex = 14
             local toggle = button("Toggle", row, marked[item.Id] and "СНЯТЬ" or "НАДЕТЬ", marked[item.Id] and GOLD or BLUE)
             toggle.Position = UDim2.new(0, 8, 1, -42)
-            toggle.Size = UDim2.new(0.31, -6, 0, 35)
+            toggle.Size = UDim2.new(0.25, -11, 0, 35)
             toggle.TextSize = 10
             toggle.ZIndex = 14
             toggle.Activated:Connect(function()
@@ -3400,10 +3440,11 @@ local function repaintPets()
                 Action:FireServer("ToggleEquip", item.Id)
             end)
             local canFuse = target ~= nil and count >= Config.FusionRequired
+            local batches = math.floor(count / Config.FusionRequired)
             local fuse = button("Fuse", row, target and "✨ СЛИТЬ" or "МАКС.", GOLD)
-            fuse.Position = UDim2.new(0.32, 0, 1, -42)
-            fuse.Size = UDim2.new(0.35, -4, 0, 35)
-            fuse.TextSize = 10
+            fuse.Position = UDim2.new(0.25, 3, 1, -42)
+            fuse.Size = UDim2.new(0.25, -11, 0, 35)
+            fuse.TextSize = 9
             fuse.ZIndex = 14
             fuse.Active = canFuse
             fuse.AutoButtonColor = canFuse
@@ -3411,29 +3452,27 @@ local function repaintPets()
             fuse.Activated:Connect(function()
                 if not canFuse or not fuse.Active or player:GetAttribute("DataReady") ~= true
                     or player:GetAttribute("DataStatus") ~= "Ready" then return end
-                if pendingFuseButton == fuse and pendingFuseSpecies == item.Species then
-                    clearFuseConfirmation()
-                    Action:FireServer("FusePets", item.Species)
-                    fuse.Text = "..."
-                    fuse.Active = false
-                else
-                    clearReleaseConfirmation()
-                    clearFuseConfirmation()
-                    pendingFuseButton = fuse
-                    pendingFuseSpecies = item.Species
-                    fuse.Text = "ТОЧНО?"
-                    local nonce = pendingFuseNonce
-                    task.delay(4, function()
-                        if pendingFuseNonce == nonce and pendingFuseButton == fuse then
-                            clearFuseConfirmation()
-                        end
-                    end)
-                end
+                confirmFusion(fuse, item.Species, "FusePets")
+            end)
+            local fuseMax = button("FuseMax", row,
+                target and ("×MAX " .. batches) or "—", GOLD)
+            fuseMax.Position = UDim2.new(0.5, 2, 1, -42)
+            fuseMax.Size = UDim2.new(0.25, -11, 0, 35)
+            fuseMax.TextSize = 9
+            fuseMax.ZIndex = 14
+            fuseMax.Active = canFuse
+            fuseMax.AutoButtonColor = canFuse
+            fuseMax.BackgroundTransparency = canFuse and 0 or 0.6
+            fuseMax.Activated:Connect(function()
+                if not canFuse or not fuseMax.Active
+                    or player:GetAttribute("DataReady") ~= true
+                    or player:GetAttribute("DataStatus") ~= "Ready" then return end
+                confirmFusion(fuseMax, item.Species, "FusePetsMax")
             end)
             local release = button("Release", row,
                 marked[item.Id] and "НАДЕТ" or "ОТПУСТИТЬ", Color3.fromRGB(232, 124, 115))
-            release.Position = UDim2.new(0.67, 0, 1, -42)
-            release.Size = UDim2.new(0.33, -8, 0, 35)
+            release.Position = UDim2.new(0.75, 2, 1, -42)
+            release.Size = UDim2.new(0.25, -11, 0, 35)
             release.TextSize = 9
             release.ZIndex = 14
             release.Active = not marked[item.Id]
@@ -6743,4 +6782,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.30 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.31 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")

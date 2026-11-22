@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.30
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.31
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -922,15 +922,14 @@ end
 -- Fusion is an atomic server-side inventory exchange, with no client-provided
 -- pet IDs or target rarity. Equipped pets are protected, and no reward counter
 -- is incremented: fusion is not a hatch and gives no quest progress.
-local function fusePets(player, p, requestedSpecies)
+-- Both the regular and MAX actions use a single transactional mutation.
+-- MAX takes every complete group of UNEQUIPPED duplicates of ONE species;
+-- no chain fusion, client-selected count, or client-selected target is allowed.
+local function fusePets(player, p, requestedSpecies, fuseMax)
     if typeof(requestedSpecies) ~= "string" or #requestedSpecies > 40 then return false end
     local result = Config.FusionResult(requestedSpecies)
     if not result then
         notify(player, "Этот питомец достиг высшей ступени слияния")
-        return false
-    end
-    if p.NextPetId > MAX_PET_ID then
-        notify(player, "Достигнут лимит ID питомцев")
         return false
     end
     local protected = {}
@@ -939,26 +938,38 @@ local function fusePets(player, p, requestedSpecies)
     for index, item in ipairs(p.Pets) do
         if item.Species == requestedSpecies and not protected[item.Id] then
             table.insert(indexes, index)
-            if #indexes == Config.FusionRequired then break end
+            if not fuseMax and #indexes == Config.FusionRequired then break end
         end
     end
-    if #indexes ~= Config.FusionRequired then
+    local batches = math.floor(#indexes / Config.FusionRequired)
+    if batches < 1 then
         notify(player, "Нужно 3 одинаковых СНЯТЫХ питомца для слияния")
         return false
     end
-    -- Remove from the end so earlier indices cannot shift under us.
-    for i = #indexes, 1, -1 do
+    -- Existing inventory cap bounds MAX batches (60 pets -> at most 20).
+    -- Refuse the whole operation if new unique pet IDs would overflow.
+    if p.NextPetId + batches - 1 > MAX_PET_ID then
+        notify(player, "Недостаточно свободных ID питомцев для слияния")
+        return false
+    end
+    -- Remove exactly the required source pets, descending by array index.
+    -- Unused duplicates and all equipped pets remain untouched.
+    for i = batches * Config.FusionRequired, 1, -1 do
         table.remove(p.Pets, indexes[i])
     end
-    local newId = p.NextPetId
-    p.NextPetId += 1
-    table.insert(p.Pets, {Id = newId, Species = result.Id})
-    if #p.Equipped < Config.MaxEquippedPets then
-        table.insert(p.Equipped, newId)
+    for _ = 1, batches do
+        local newId = p.NextPetId
+        p.NextPetId += 1
+        table.insert(p.Pets, {Id = newId, Species = result.Id})
+        if #p.Equipped < Config.MaxEquippedPets then
+            table.insert(p.Equipped, newId)
+        end
+        countError("PetsFused")
     end
-    countError("PetsFused")
+    -- A single visual event prevents a burst of hatch/fusion effects.
     VisualEvent:FireClient(player, {Type = "Fusion", Species = result.Id})
-    notify(player, "Слияние успешно! Получен: " .. result.Name)
+    notify(player, "Слияние ×" .. batches .. " — получен: " .. result.Name
+        .. " (" .. batches .. " шт.)")
     return true
 end
 
@@ -1123,8 +1134,8 @@ local function handleAction(player, actionName, argument)
     elseif actionName == "ReleasePet" then
         changed = releasePet(player, p, argument)
         petsChanged = changed
-    elseif actionName == "FusePets" then
-        changed = fusePets(player, p, argument)
+    elseif actionName == "FusePets" or actionName == "FusePetsMax" then
+        changed = fusePets(player, p, argument, actionName == "FusePetsMax")
         petsChanged = changed
     elseif actionName == "ClaimEvent" then
         -- Claim is possible after the active window, but only before UTC midnight.

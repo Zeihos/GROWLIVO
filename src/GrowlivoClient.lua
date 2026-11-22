@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.30
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.31
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -272,6 +272,8 @@ local pendingReleaseButton = nil
 local pendingReleaseNonce = 0
 local pendingFuseSpecies = nil
 local pendingFuseButton = nil
+local pendingFuseAction = nil
+local pendingFuseLabel = nil
 local pendingFuseNonce = 0
 local sortMode = "Power" -- Power / New / Old
 local equippedOnly = false
@@ -315,11 +317,38 @@ local function clearReleaseConfirmation()
 end
 local function clearFuseConfirmation()
     if pendingFuseButton and pendingFuseButton.Parent then
-        pendingFuseButton.Text = "✨ СЛИТЬ"
+        pendingFuseButton.Text = pendingFuseLabel or "✨ СЛИТЬ"
     end
     pendingFuseSpecies = nil
     pendingFuseButton = nil
+    pendingFuseAction = nil
+    pendingFuseLabel = nil
     pendingFuseNonce += 1
+end
+-- A local two-tap confirmation is for accidental-click protection only.
+-- The server rechecks pet ownership, equipment and limits on every action.
+local function confirmFusion(targetButton, species, action)
+    if pendingFuseButton == targetButton and pendingFuseSpecies == species
+        and pendingFuseAction == action then
+        clearFuseConfirmation()
+        Action:FireServer(action, species)
+        targetButton.Text = "..."
+        targetButton.Active = false
+        return
+    end
+    clearReleaseConfirmation()
+    clearFuseConfirmation()
+    pendingFuseButton = targetButton
+    pendingFuseSpecies = species
+    pendingFuseAction = action
+    pendingFuseLabel = targetButton.Text
+    targetButton.Text = "ТОЧНО?"
+    local nonce = pendingFuseNonce
+    task.delay(4, function()
+        if pendingFuseNonce == nonce and pendingFuseButton == targetButton then
+            clearFuseConfirmation()
+        end
+    end)
 end
 
 -- Catalog derives its information from the shared world/egg definitions and
@@ -497,7 +526,7 @@ local function repaintPets()
             rarity.ZIndex = 14
             local toggle = button("Toggle", row, marked[item.Id] and "СНЯТЬ" or "НАДЕТЬ", marked[item.Id] and GOLD or BLUE)
             toggle.Position = UDim2.new(0, 8, 1, -42)
-            toggle.Size = UDim2.new(0.31, -6, 0, 35)
+            toggle.Size = UDim2.new(0.25, -11, 0, 35)
             toggle.TextSize = 10
             toggle.ZIndex = 14
             toggle.Activated:Connect(function()
@@ -506,10 +535,11 @@ local function repaintPets()
                 Action:FireServer("ToggleEquip", item.Id)
             end)
             local canFuse = target ~= nil and count >= Config.FusionRequired
+            local batches = math.floor(count / Config.FusionRequired)
             local fuse = button("Fuse", row, target and "✨ СЛИТЬ" or "МАКС.", GOLD)
-            fuse.Position = UDim2.new(0.32, 0, 1, -42)
-            fuse.Size = UDim2.new(0.35, -4, 0, 35)
-            fuse.TextSize = 10
+            fuse.Position = UDim2.new(0.25, 3, 1, -42)
+            fuse.Size = UDim2.new(0.25, -11, 0, 35)
+            fuse.TextSize = 9
             fuse.ZIndex = 14
             fuse.Active = canFuse
             fuse.AutoButtonColor = canFuse
@@ -517,29 +547,27 @@ local function repaintPets()
             fuse.Activated:Connect(function()
                 if not canFuse or not fuse.Active or player:GetAttribute("DataReady") ~= true
                     or player:GetAttribute("DataStatus") ~= "Ready" then return end
-                if pendingFuseButton == fuse and pendingFuseSpecies == item.Species then
-                    clearFuseConfirmation()
-                    Action:FireServer("FusePets", item.Species)
-                    fuse.Text = "..."
-                    fuse.Active = false
-                else
-                    clearReleaseConfirmation()
-                    clearFuseConfirmation()
-                    pendingFuseButton = fuse
-                    pendingFuseSpecies = item.Species
-                    fuse.Text = "ТОЧНО?"
-                    local nonce = pendingFuseNonce
-                    task.delay(4, function()
-                        if pendingFuseNonce == nonce and pendingFuseButton == fuse then
-                            clearFuseConfirmation()
-                        end
-                    end)
-                end
+                confirmFusion(fuse, item.Species, "FusePets")
+            end)
+            local fuseMax = button("FuseMax", row,
+                target and ("×MAX " .. batches) or "—", GOLD)
+            fuseMax.Position = UDim2.new(0.5, 2, 1, -42)
+            fuseMax.Size = UDim2.new(0.25, -11, 0, 35)
+            fuseMax.TextSize = 9
+            fuseMax.ZIndex = 14
+            fuseMax.Active = canFuse
+            fuseMax.AutoButtonColor = canFuse
+            fuseMax.BackgroundTransparency = canFuse and 0 or 0.6
+            fuseMax.Activated:Connect(function()
+                if not canFuse or not fuseMax.Active
+                    or player:GetAttribute("DataReady") ~= true
+                    or player:GetAttribute("DataStatus") ~= "Ready" then return end
+                confirmFusion(fuseMax, item.Species, "FusePetsMax")
             end)
             local release = button("Release", row,
                 marked[item.Id] and "НАДЕТ" or "ОТПУСТИТЬ", Color3.fromRGB(232, 124, 115))
-            release.Position = UDim2.new(0.67, 0, 1, -42)
-            release.Size = UDim2.new(0.33, -8, 0, 35)
+            release.Position = UDim2.new(0.75, 2, 1, -42)
+            release.Size = UDim2.new(0.25, -11, 0, 35)
             release.TextSize = 9
             release.ZIndex = 14
             release.Active = not marked[item.Id]
