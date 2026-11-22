@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.31
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.32
 local Config = {}
-Config.Version = "Alpha 0.9.31"
+Config.Version = "Alpha 0.9.32"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -124,6 +124,28 @@ function Config.FusionResult(species)
     if typeof(species) ~= "string" then return nil end
     local nextSpecies = Config.FusionNext[species]
     return nextSpecies and petById[nextSpecies] or nil
+end
+-- Safe MAX fusion keeps at least one copy of the SOURCE species across the
+-- equipped + unequipped inventory. Protects completed world collections while
+-- allowing ordinary FusePets to consume the last copy if explicitly chosen.
+-- Shared with the client for a preview; the server always recalculates.
+function Config.SafeFusionBatches(inventory, equipped, species)
+    if not Config.FusionResult(species) then return 0 end
+    if typeof(inventory) ~= "table" or typeof(equipped) ~= "table" then return 0 end
+    local equippedIds = {}
+    for _, id in ipairs(equipped) do equippedIds[id] = true end
+    local available, protectedCopy = 0, false
+    for _, pet in ipairs(inventory) do
+        if typeof(pet) == "table" and pet.Species == species then
+            if equippedIds[pet.Id] then
+                protectedCopy = true
+            else
+                available += 1
+            end
+        end
+    end
+    local reserve = protectedCopy and 0 or 1
+    return math.floor(math.max(0, available - reserve) / Config.FusionRequired)
 end
 
 -- Only the server chooses the egg and rolls the odds.

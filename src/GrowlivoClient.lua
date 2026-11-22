@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.31
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.32
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -275,9 +275,11 @@ local pendingFuseButton = nil
 local pendingFuseAction = nil
 local pendingFuseLabel = nil
 local pendingFuseNonce = 0
-local sortMode = "Power" -- Power / New / Old
+local sortMode = "Power" -- Power / Rarity / New / Old
 local equippedOnly = false
-local sortNames = {Power = "СИЛА ↓", New = "НОВЫЕ", Old = "СТАРЫЕ"}
+local sortNames = {Power = "СИЛА ↓", Rarity = "РЕДКОСТЬ", New = "НОВЫЕ", Old = "СТАРЫЕ"}
+local rarityRanks = {["Обычный"] = 1, ["Необычный"] = 2, ["Редкий"] = 3,
+    ["Эпический"] = 4, ["Легендарный"] = 5, ["Мифический"] = 6}
 local catalogWorldNames = {"НЕБО", "КРИСТ.", "РОЩА"}
 local function syncPetTabUI()
     local isCatalog = petsTab == "Catalog"
@@ -330,10 +332,19 @@ end
 local function confirmFusion(targetButton, species, action)
     if pendingFuseButton == targetButton and pendingFuseSpecies == species
         and pendingFuseAction == action then
+        local label = pendingFuseLabel or targetButton.Text
         clearFuseConfirmation()
-        Action:FireServer(action, species)
         targetButton.Text = "..."
         targetButton.Active = false
+        Action:FireServer(action, species)
+        -- If the server refuses the request, no PetState repaint occurs.
+        -- Unlock this button rather than leaving it disabled indefinitely.
+        task.delay(2, function()
+            if targetButton.Parent and targetButton.Text == "..." then
+                targetButton.Text = label
+                targetButton.Active = true
+            end
+        end)
         return
     end
     clearReleaseConfirmation()
@@ -469,6 +480,13 @@ local function repaintPets()
             availableBySpecies[item.Species] = (availableBySpecies[item.Species] or 0) + 1
         end
     end
+    -- Cache one safe MAX quote per species rather than recalculating it
+    -- for every pet row (up to sixty inventory entries).
+    local safeBatchesBySpecies = {}
+    for species in pairs(availableBySpecies) do
+        safeBatchesBySpecies[species] =
+            Config.SafeFusionBatches(currentPets, currentEquipped, species)
+    end
     local query = normalizeSearch(search.Text)
     local visiblePets = {}
     for _, item in ipairs(currentPets) do
@@ -484,6 +502,11 @@ local function repaintPets()
         if sortMode == "New" then return a.Id > b.Id end
         if sortMode == "Old" then return a.Id < b.Id end
         local petA, petB = Config.FindPet(a.Species), Config.FindPet(b.Species)
+        if sortMode == "Rarity" then
+            local rankA = petA and rarityRanks[petA.Rarity] or 0
+            local rankB = petB and rarityRanks[petB.Rarity] or 0
+            if rankA ~= rankB then return rankA > rankB end
+        end
         local powerA, powerB = petA and petA.Bonus or 0, petB and petB.Bonus or 0
         if powerA == powerB then return a.Id < b.Id end
         return powerA > powerB
@@ -535,7 +558,8 @@ local function repaintPets()
                 Action:FireServer("ToggleEquip", item.Id)
             end)
             local canFuse = target ~= nil and count >= Config.FusionRequired
-            local batches = math.floor(count / Config.FusionRequired)
+            local batches = safeBatchesBySpecies[item.Species] or 0
+            local canFuseMax = target ~= nil and batches > 0
             local fuse = button("Fuse", row, target and "✨ СЛИТЬ" or "МАКС.", GOLD)
             fuse.Position = UDim2.new(0.25, 3, 1, -42)
             fuse.Size = UDim2.new(0.25, -11, 0, 35)
@@ -550,16 +574,16 @@ local function repaintPets()
                 confirmFusion(fuse, item.Species, "FusePets")
             end)
             local fuseMax = button("FuseMax", row,
-                target and ("×MAX " .. batches) or "—", GOLD)
+                target and (canFuseMax and ("×MAX " .. batches) or "🔒 MAX") or "—", GOLD)
             fuseMax.Position = UDim2.new(0.5, 2, 1, -42)
             fuseMax.Size = UDim2.new(0.25, -11, 0, 35)
             fuseMax.TextSize = 9
             fuseMax.ZIndex = 14
-            fuseMax.Active = canFuse
-            fuseMax.AutoButtonColor = canFuse
-            fuseMax.BackgroundTransparency = canFuse and 0 or 0.6
+            fuseMax.Active = canFuseMax
+            fuseMax.AutoButtonColor = canFuseMax
+            fuseMax.BackgroundTransparency = canFuseMax and 0 or 0.6
             fuseMax.Activated:Connect(function()
-                if not canFuse or not fuseMax.Active
+                if not canFuseMax or not fuseMax.Active
                     or player:GetAttribute("DataReady") ~= true
                     or player:GetAttribute("DataStatus") ~= "Ready" then return end
                 confirmFusion(fuseMax, item.Species, "FusePetsMax")
@@ -877,7 +901,9 @@ sortButton.Activated:Connect(function()
     if petsTab == "Catalog" then
         catalogWorld = (catalogWorld + 1) % (#Config.Worlds + 1)
     else
-        sortMode = sortMode == "Power" and "New" or (sortMode == "New" and "Old" or "Power")
+        sortMode = sortMode == "Power" and "Rarity"
+            or (sortMode == "Rarity" and "New"
+                or (sortMode == "New" and "Old" or "Power"))
     end
     syncPetTabUI()
     updateFilter()

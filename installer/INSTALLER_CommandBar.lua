@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.31 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.32 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.31
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.32
 local Config = {}
-Config.Version = "Alpha 0.9.31"
+Config.Version = "Alpha 0.9.32"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -133,6 +133,28 @@ function Config.FusionResult(species)
     if typeof(species) ~= "string" then return nil end
     local nextSpecies = Config.FusionNext[species]
     return nextSpecies and petById[nextSpecies] or nil
+end
+-- Safe MAX fusion keeps at least one copy of the SOURCE species across the
+-- equipped + unequipped inventory. Protects completed world collections while
+-- allowing ordinary FusePets to consume the last copy if explicitly chosen.
+-- Shared with the client for a preview; the server always recalculates.
+function Config.SafeFusionBatches(inventory, equipped, species)
+    if not Config.FusionResult(species) then return 0 end
+    if typeof(inventory) ~= "table" or typeof(equipped) ~= "table" then return 0 end
+    local equippedIds = {}
+    for _, id in ipairs(equipped) do equippedIds[id] = true end
+    local available, protectedCopy = 0, false
+    for _, pet in ipairs(inventory) do
+        if typeof(pet) == "table" and pet.Species == species then
+            if equippedIds[pet.Id] then
+                protectedCopy = true
+            else
+                available += 1
+            end
+        end
+    end
+    local reserve = protectedCopy and 0 or 1
+    return math.floor(math.max(0, available - reserve) / Config.FusionRequired)
 end
 
 -- Only the server chooses the egg and rolls the odds.
@@ -702,7 +724,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.31
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.32
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -1626,9 +1648,10 @@ end
 -- Fusion is an atomic server-side inventory exchange, with no client-provided
 -- pet IDs or target rarity. Equipped pets are protected, and no reward counter
 -- is incremented: fusion is not a hatch and gives no quest progress.
--- Both the regular and MAX actions use a single transactional mutation.
--- MAX takes every complete group of UNEQUIPPED duplicates of ONE species;
--- no chain fusion, client-selected count, or client-selected target is allowed.
+-- Both actions use a single transactional mutation. Safe MAX preserves one
+-- copy of the source species across equipped and unequipped pets, protecting
+-- collection bonuses. Ordinary fusion remains available for intentional use.
+-- Neither action trusts a client-selected count or target species.
 local function fusePets(player, p, requestedSpecies, fuseMax)
     if typeof(requestedSpecies) ~= "string" or #requestedSpecies > 40 then return false end
     local result = Config.FusionResult(requestedSpecies)
@@ -1645,9 +1668,13 @@ local function fusePets(player, p, requestedSpecies, fuseMax)
             if not fuseMax and #indexes == Config.FusionRequired then break end
         end
     end
-    local batches = math.floor(#indexes / Config.FusionRequired)
+    local batches = fuseMax
+        and Config.SafeFusionBatches(p.Pets, p.Equipped, requestedSpecies)
+        or math.floor(#indexes / Config.FusionRequired)
     if batches < 1 then
-        notify(player, "Нужно 3 одинаковых СНЯТЫХ питомца для слияния")
+        notify(player, fuseMax
+            and "Нет безопасных групп для ×MAX: последний питомец вида защищён"
+            or "Нужно 3 одинаковых СНЯТЫХ питомца для слияния")
         return false
     end
     -- Existing inventory cap bounds MAX batches (60 pets -> at most 20).
@@ -1657,7 +1684,8 @@ local function fusePets(player, p, requestedSpecies, fuseMax)
         return false
     end
     -- Remove exactly the required source pets, descending by array index.
-    -- Unused duplicates and all equipped pets remain untouched.
+    -- MAX reserves one un-equipped source pet if no equipped copy exists.
+    -- All equipped pets and other species remain untouched.
     for i = batches * Config.FusionRequired, 1, -1 do
         table.remove(p.Pets, indexes[i])
     end
@@ -2903,7 +2931,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.31
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.32
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3180,9 +3208,11 @@ local pendingFuseButton = nil
 local pendingFuseAction = nil
 local pendingFuseLabel = nil
 local pendingFuseNonce = 0
-local sortMode = "Power" -- Power / New / Old
+local sortMode = "Power" -- Power / Rarity / New / Old
 local equippedOnly = false
-local sortNames = {Power = "СИЛА ↓", New = "НОВЫЕ", Old = "СТАРЫЕ"}
+local sortNames = {Power = "СИЛА ↓", Rarity = "РЕДКОСТЬ", New = "НОВЫЕ", Old = "СТАРЫЕ"}
+local rarityRanks = {["Обычный"] = 1, ["Необычный"] = 2, ["Редкий"] = 3,
+    ["Эпический"] = 4, ["Легендарный"] = 5, ["Мифический"] = 6}
 local catalogWorldNames = {"НЕБО", "КРИСТ.", "РОЩА"}
 local function syncPetTabUI()
     local isCatalog = petsTab == "Catalog"
@@ -3235,10 +3265,19 @@ end
 local function confirmFusion(targetButton, species, action)
     if pendingFuseButton == targetButton and pendingFuseSpecies == species
         and pendingFuseAction == action then
+        local label = pendingFuseLabel or targetButton.Text
         clearFuseConfirmation()
-        Action:FireServer(action, species)
         targetButton.Text = "..."
         targetButton.Active = false
+        Action:FireServer(action, species)
+        -- If the server refuses the request, no PetState repaint occurs.
+        -- Unlock this button rather than leaving it disabled indefinitely.
+        task.delay(2, function()
+            if targetButton.Parent and targetButton.Text == "..." then
+                targetButton.Text = label
+                targetButton.Active = true
+            end
+        end)
         return
     end
     clearReleaseConfirmation()
@@ -3374,6 +3413,13 @@ local function repaintPets()
             availableBySpecies[item.Species] = (availableBySpecies[item.Species] or 0) + 1
         end
     end
+    -- Cache one safe MAX quote per species rather than recalculating it
+    -- for every pet row (up to sixty inventory entries).
+    local safeBatchesBySpecies = {}
+    for species in pairs(availableBySpecies) do
+        safeBatchesBySpecies[species] =
+            Config.SafeFusionBatches(currentPets, currentEquipped, species)
+    end
     local query = normalizeSearch(search.Text)
     local visiblePets = {}
     for _, item in ipairs(currentPets) do
@@ -3389,6 +3435,11 @@ local function repaintPets()
         if sortMode == "New" then return a.Id > b.Id end
         if sortMode == "Old" then return a.Id < b.Id end
         local petA, petB = Config.FindPet(a.Species), Config.FindPet(b.Species)
+        if sortMode == "Rarity" then
+            local rankA = petA and rarityRanks[petA.Rarity] or 0
+            local rankB = petB and rarityRanks[petB.Rarity] or 0
+            if rankA ~= rankB then return rankA > rankB end
+        end
         local powerA, powerB = petA and petA.Bonus or 0, petB and petB.Bonus or 0
         if powerA == powerB then return a.Id < b.Id end
         return powerA > powerB
@@ -3440,7 +3491,8 @@ local function repaintPets()
                 Action:FireServer("ToggleEquip", item.Id)
             end)
             local canFuse = target ~= nil and count >= Config.FusionRequired
-            local batches = math.floor(count / Config.FusionRequired)
+            local batches = safeBatchesBySpecies[item.Species] or 0
+            local canFuseMax = target ~= nil and batches > 0
             local fuse = button("Fuse", row, target and "✨ СЛИТЬ" or "МАКС.", GOLD)
             fuse.Position = UDim2.new(0.25, 3, 1, -42)
             fuse.Size = UDim2.new(0.25, -11, 0, 35)
@@ -3455,16 +3507,16 @@ local function repaintPets()
                 confirmFusion(fuse, item.Species, "FusePets")
             end)
             local fuseMax = button("FuseMax", row,
-                target and ("×MAX " .. batches) or "—", GOLD)
+                target and (canFuseMax and ("×MAX " .. batches) or "🔒 MAX") or "—", GOLD)
             fuseMax.Position = UDim2.new(0.5, 2, 1, -42)
             fuseMax.Size = UDim2.new(0.25, -11, 0, 35)
             fuseMax.TextSize = 9
             fuseMax.ZIndex = 14
-            fuseMax.Active = canFuse
-            fuseMax.AutoButtonColor = canFuse
-            fuseMax.BackgroundTransparency = canFuse and 0 or 0.6
+            fuseMax.Active = canFuseMax
+            fuseMax.AutoButtonColor = canFuseMax
+            fuseMax.BackgroundTransparency = canFuseMax and 0 or 0.6
             fuseMax.Activated:Connect(function()
-                if not canFuse or not fuseMax.Active
+                if not canFuseMax or not fuseMax.Active
                     or player:GetAttribute("DataReady") ~= true
                     or player:GetAttribute("DataStatus") ~= "Ready" then return end
                 confirmFusion(fuseMax, item.Species, "FusePetsMax")
@@ -3782,7 +3834,9 @@ sortButton.Activated:Connect(function()
     if petsTab == "Catalog" then
         catalogWorld = (catalogWorld + 1) % (#Config.Worlds + 1)
     else
-        sortMode = sortMode == "Power" and "New" or (sortMode == "New" and "Old" or "Power")
+        sortMode = sortMode == "Power" and "Rarity"
+            or (sortMode == "Rarity" and "New"
+                or (sortMode == "New" and "Old" or "Power"))
     end
     syncPetTabUI()
     updateFilter()
@@ -6782,4 +6836,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.31 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.32 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")

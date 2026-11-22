@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.31
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.32
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -922,9 +922,10 @@ end
 -- Fusion is an atomic server-side inventory exchange, with no client-provided
 -- pet IDs or target rarity. Equipped pets are protected, and no reward counter
 -- is incremented: fusion is not a hatch and gives no quest progress.
--- Both the regular and MAX actions use a single transactional mutation.
--- MAX takes every complete group of UNEQUIPPED duplicates of ONE species;
--- no chain fusion, client-selected count, or client-selected target is allowed.
+-- Both actions use a single transactional mutation. Safe MAX preserves one
+-- copy of the source species across equipped and unequipped pets, protecting
+-- collection bonuses. Ordinary fusion remains available for intentional use.
+-- Neither action trusts a client-selected count or target species.
 local function fusePets(player, p, requestedSpecies, fuseMax)
     if typeof(requestedSpecies) ~= "string" or #requestedSpecies > 40 then return false end
     local result = Config.FusionResult(requestedSpecies)
@@ -941,9 +942,13 @@ local function fusePets(player, p, requestedSpecies, fuseMax)
             if not fuseMax and #indexes == Config.FusionRequired then break end
         end
     end
-    local batches = math.floor(#indexes / Config.FusionRequired)
+    local batches = fuseMax
+        and Config.SafeFusionBatches(p.Pets, p.Equipped, requestedSpecies)
+        or math.floor(#indexes / Config.FusionRequired)
     if batches < 1 then
-        notify(player, "Нужно 3 одинаковых СНЯТЫХ питомца для слияния")
+        notify(player, fuseMax
+            and "Нет безопасных групп для ×MAX: последний питомец вида защищён"
+            or "Нужно 3 одинаковых СНЯТЫХ питомца для слияния")
         return false
     end
     -- Existing inventory cap bounds MAX batches (60 pets -> at most 20).
@@ -953,7 +958,8 @@ local function fusePets(player, p, requestedSpecies, fuseMax)
         return false
     end
     -- Remove exactly the required source pets, descending by array index.
-    -- Unused duplicates and all equipped pets remain untouched.
+    -- MAX reserves one un-equipped source pet if no equipped copy exists.
+    -- All equipped pets and other species remain untouched.
     for i = batches * Config.FusionRequired, 1, -1 do
         table.remove(p.Pets, indexes[i])
     end
