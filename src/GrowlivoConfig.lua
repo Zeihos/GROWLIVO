@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.33
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.34
 local Config = {}
-Config.Version = "Alpha 0.9.33"
+Config.Version = "Alpha 0.9.34"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -148,6 +148,30 @@ function Config.SafeFusionBatches(inventory, equipped, species)
     end
     local reserve = protectedCopy and 0 or 1
     return math.floor(math.max(0, available - reserve) / Config.FusionRequired)
+end
+
+-- Safe duplicate cleanup protects all equipped pets and one copy of every
+-- species still owned. The oldest free instance is kept if none is equipped.
+-- A pure preview for the UI; the server always recomputes it from the profile.
+function Config.DuplicateReleaseIds(inventory, equipped)
+    if typeof(inventory) ~= "table" or typeof(equipped) ~= "table" then return {} end
+    local equippedIds, keptSpecies, releaseIds = {}, {}, {}
+    for _, id in ipairs(equipped) do equippedIds[id] = true end
+    for _, pet in ipairs(inventory) do
+        if typeof(pet) == "table" and equippedIds[pet.Id] and Config.FindPet(pet.Species) then
+            keptSpecies[pet.Species] = true
+        end
+    end
+    for _, pet in ipairs(inventory) do
+        if typeof(pet) == "table" and not equippedIds[pet.Id] and Config.FindPet(pet.Species) then
+            if keptSpecies[pet.Species] then
+                table.insert(releaseIds, pet.Id)
+            else
+                keptSpecies[pet.Species] = true
+            end
+        end
+    end
+    return releaseIds
 end
 
 -- Only the server chooses the egg and rolls the odds.
