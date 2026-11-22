@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.29
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.30
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -481,6 +481,9 @@ local function sync(player, trackMutation)
         SaveReceipt.HasPending(p))
     local world = Config.FindWorld(p.World) or Config.Worlds[1]
     local bonus = Config.PetBonus(p.Pets, p.Equipped)
+    local collectionBonus, speciesCount = Config.CollectionBonus(p.Pets)
+    setPlayerAttribute(player, "CollectionBonus", collectionBonus)
+    setPlayerAttribute(player, "CollectionSpecies", speciesCount)
     setPlayerAttribute(player, "Clicks", p.Clicks)
     setPlayerAttribute(player, "TotalClicks", p.TotalClicks)
     setPlayerAttribute(player, "Gems", p.Gems)
@@ -497,7 +500,7 @@ local function sync(player, trackMutation)
     publishRune(player, p.World)
     local _, _, eventMultiplier = Config.StarfallAt(os.time())
     setPlayerAttribute(player, "EventMultiplier", eventMultiplier)
-    setPlayerAttribute(player, "ClickPower", Config.ClickPower(p.TapLevel, p.Rebirths, bonus, world.Multiplier) * eventMultiplier * runeBoostFor(player, p.World))
+    setPlayerAttribute(player, "ClickPower", Config.ClickPower(p.TapLevel, p.Rebirths, bonus + collectionBonus, world.Multiplier) * eventMultiplier * runeBoostFor(player, p.World))
     setPlayerAttribute(player, "TutorialStep", p.TutorialStep)
     setPlayerAttribute(player, "TutorialClicks", p.TutorialClicks)
     for key, enabled in pairs(p.Settings) do
@@ -969,7 +972,7 @@ local function awardTap(player, p, manual)
     local world = Config.FindWorld(p.World) or Config.Worlds[1]
     local active, _, eventMultiplier = Config.StarfallAt(os.time())
     local power = Config.ClickPower(p.TapLevel, p.Rebirths,
-        Config.PetBonus(p.Pets, p.Equipped), world.Multiplier)
+        Config.PetBonus(p.Pets, p.Equipped) + Config.CollectionBonus(p.Pets), world.Multiplier)
         * eventMultiplier * runeBoostFor(player, p.World)
     power = math.max(1, math.floor(power * comboMultiplier))
     if active and not p.StarfallClaimed then

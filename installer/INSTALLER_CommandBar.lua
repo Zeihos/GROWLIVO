@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.29 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.30 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.29
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.30
 local Config = {}
-Config.Version = "Alpha 0.9.29"
+Config.Version = "Alpha 0.9.30"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -200,6 +200,34 @@ function Config.PetBonus(inventory, equipped)
         if pet then bonus += pet.Bonus end
     end
     return bonus
+end
+-- A completed world's collection grants a bonus only while every species
+-- from that world's egg is CURRENTLY present in the player's inventory.
+-- No additional persistent fields are needed: the server owns the inventory.
+Config.CollectionRewards = {SkyCrown = 5, CrystalVale = 10, AuroraGrove = 20}
+function Config.CollectionBonus(inventory)
+    local ownedSpecies = {}
+    if typeof(inventory) == "table" then
+        for _, entry in ipairs(inventory) do
+            if typeof(entry) == "table" and Config.FindPet(entry.Species) then
+                ownedSpecies[entry.Species] = true
+            end
+        end
+    end
+    local uniqueCount = 0
+    for _ in pairs(ownedSpecies) do uniqueCount += 1 end
+    local bonus, byWorld = 0, {}
+    for _, world in ipairs(Config.Worlds) do
+        local egg = Config.Eggs[world.EggId]
+        local count = 0
+        for _, drop in ipairs(egg.Drops) do
+            if ownedSpecies[drop.Species] then count += 1 end
+        end
+        local complete = count == #egg.Drops
+        byWorld[world.Id] = {Count = count, Total = #egg.Drops, Complete = complete}
+        if complete then bonus += Config.CollectionRewards[world.Id] or 0 end
+    end
+    return bonus, uniqueCount, byWorld
 end
 function Config.ClickPower(tapLevel, rebirths, petBonus, worldMultiplier)
     local level = math.max(1, math.floor(tapLevel))
@@ -674,7 +702,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.29
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.30
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -1157,6 +1185,9 @@ local function sync(player, trackMutation)
         SaveReceipt.HasPending(p))
     local world = Config.FindWorld(p.World) or Config.Worlds[1]
     local bonus = Config.PetBonus(p.Pets, p.Equipped)
+    local collectionBonus, speciesCount = Config.CollectionBonus(p.Pets)
+    setPlayerAttribute(player, "CollectionBonus", collectionBonus)
+    setPlayerAttribute(player, "CollectionSpecies", speciesCount)
     setPlayerAttribute(player, "Clicks", p.Clicks)
     setPlayerAttribute(player, "TotalClicks", p.TotalClicks)
     setPlayerAttribute(player, "Gems", p.Gems)
@@ -1173,7 +1204,7 @@ local function sync(player, trackMutation)
     publishRune(player, p.World)
     local _, _, eventMultiplier = Config.StarfallAt(os.time())
     setPlayerAttribute(player, "EventMultiplier", eventMultiplier)
-    setPlayerAttribute(player, "ClickPower", Config.ClickPower(p.TapLevel, p.Rebirths, bonus, world.Multiplier) * eventMultiplier * runeBoostFor(player, p.World))
+    setPlayerAttribute(player, "ClickPower", Config.ClickPower(p.TapLevel, p.Rebirths, bonus + collectionBonus, world.Multiplier) * eventMultiplier * runeBoostFor(player, p.World))
     setPlayerAttribute(player, "TutorialStep", p.TutorialStep)
     setPlayerAttribute(player, "TutorialClicks", p.TutorialClicks)
     for key, enabled in pairs(p.Settings) do
@@ -1645,7 +1676,7 @@ local function awardTap(player, p, manual)
     local world = Config.FindWorld(p.World) or Config.Worlds[1]
     local active, _, eventMultiplier = Config.StarfallAt(os.time())
     local power = Config.ClickPower(p.TapLevel, p.Rebirths,
-        Config.PetBonus(p.Pets, p.Equipped), world.Multiplier)
+        Config.PetBonus(p.Pets, p.Equipped) + Config.CollectionBonus(p.Pets), world.Multiplier)
         * eventMultiplier * runeBoostFor(player, p.World)
     power = math.max(1, math.floor(power * comboMultiplier))
     if active and not p.StarfallClaimed then
@@ -2861,7 +2892,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.29
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.30
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3194,15 +3225,47 @@ local function repaintPetCatalog()
             owned[pet.Species] = (owned[pet.Species] or 0) + 1
         end
     end
-    local unique = 0
-    for _ in pairs(owned) do unique += 1 end
+    local collectionBonus, unique, setProgress = Config.CollectionBonus(currentPets)
     inventoryTitle.Text = modal.Size.X.Offset < 420
-        and string.format("В НАЛИЧИИ: %d/%d", unique, #Config.Pets)
-        or string.format("ВИДОВ В ИНВЕНТАРЕ: %d/%d", unique, #Config.Pets)
+        and string.format("ВИДЫ %d/%d  •  +%d%%", unique, #Config.Pets, collectionBonus)
+        or string.format("КОЛЛЕКЦИИ: %d/%d  |  БОНУС +%d%%", unique, #Config.Pets, collectionBonus)
     local query = normalizeSearch(search.Text)
     local rowIndex = 0
     for worldIndex, world in ipairs(Config.Worlds) do
         if catalogWorld == 0 or catalogWorld == worldIndex then
+            -- The summary remains visible in "owned only" mode: missing
+            -- species are needed to understand the next collection goal.
+            local set = setProgress[world.Id]
+            local reward = Config.CollectionRewards[world.Id] or 0
+            rowIndex += 1
+            local banner = frame("Collection_" .. world.Id, scroll, PANEL)
+            banner.Size = UDim2.new(1, -4, 0, 55)
+            banner.LayoutOrder = rowIndex
+            banner.ZIndex = 13
+            local caption = text("SetProgress", banner, world.Name .. "  •  "
+                .. set.Count .. "/" .. set.Total .. "  •  +" .. reward .. "%",
+                12, set.Complete and GOLD or WHITE)
+            caption.Position = UDim2.fromOffset(10, 5)
+            caption.Size = UDim2.new(1, -20, 0, 27)
+            caption.TextXAlignment = Enum.TextXAlignment.Left
+            caption.ZIndex = 14
+            local background = Instance.new("Frame")
+            background.Name = "SetBar"
+            background.Position = UDim2.new(0, 10, 1, -13)
+            background.Size = UDim2.new(1, -20, 0, 5)
+            background.BackgroundColor3 = DARK
+            background.BorderSizePixel = 0
+            background.ZIndex = 14
+            background.Parent = banner
+            rounded(background, 4)
+            local fill = Instance.new("Frame")
+            fill.Name = "Fill"
+            fill.Size = UDim2.fromScale(set.Count / math.max(1, set.Total), 1)
+            fill.BackgroundColor3 = set.Complete and GOLD or BLUE
+            fill.BorderSizePixel = 0
+            fill.ZIndex = 15
+            fill.Parent = background
+            rounded(fill, 4)
             local egg = Config.Eggs[world.EggId]
             if egg then
                 for _, drop in ipairs(egg.Drops) do
@@ -6680,4 +6743,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.29 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.30 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")

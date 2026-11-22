@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.29
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.30
 local Config = {}
-Config.Version = "Alpha 0.9.29"
+Config.Version = "Alpha 0.9.30"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -191,6 +191,34 @@ function Config.PetBonus(inventory, equipped)
         if pet then bonus += pet.Bonus end
     end
     return bonus
+end
+-- A completed world's collection grants a bonus only while every species
+-- from that world's egg is CURRENTLY present in the player's inventory.
+-- No additional persistent fields are needed: the server owns the inventory.
+Config.CollectionRewards = {SkyCrown = 5, CrystalVale = 10, AuroraGrove = 20}
+function Config.CollectionBonus(inventory)
+    local ownedSpecies = {}
+    if typeof(inventory) == "table" then
+        for _, entry in ipairs(inventory) do
+            if typeof(entry) == "table" and Config.FindPet(entry.Species) then
+                ownedSpecies[entry.Species] = true
+            end
+        end
+    end
+    local uniqueCount = 0
+    for _ in pairs(ownedSpecies) do uniqueCount += 1 end
+    local bonus, byWorld = 0, {}
+    for _, world in ipairs(Config.Worlds) do
+        local egg = Config.Eggs[world.EggId]
+        local count = 0
+        for _, drop in ipairs(egg.Drops) do
+            if ownedSpecies[drop.Species] then count += 1 end
+        end
+        local complete = count == #egg.Drops
+        byWorld[world.Id] = {Count = count, Total = #egg.Drops, Complete = complete}
+        if complete then bonus += Config.CollectionRewards[world.Id] or 0 end
+    end
+    return bonus, uniqueCount, byWorld
 end
 function Config.ClickPower(tapLevel, rebirths, petBonus, worldMultiplier)
     local level = math.max(1, math.floor(tapLevel))

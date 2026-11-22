@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.29
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.30
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -331,15 +331,47 @@ local function repaintPetCatalog()
             owned[pet.Species] = (owned[pet.Species] or 0) + 1
         end
     end
-    local unique = 0
-    for _ in pairs(owned) do unique += 1 end
+    local collectionBonus, unique, setProgress = Config.CollectionBonus(currentPets)
     inventoryTitle.Text = modal.Size.X.Offset < 420
-        and string.format("В НАЛИЧИИ: %d/%d", unique, #Config.Pets)
-        or string.format("ВИДОВ В ИНВЕНТАРЕ: %d/%d", unique, #Config.Pets)
+        and string.format("ВИДЫ %d/%d  •  +%d%%", unique, #Config.Pets, collectionBonus)
+        or string.format("КОЛЛЕКЦИИ: %d/%d  |  БОНУС +%d%%", unique, #Config.Pets, collectionBonus)
     local query = normalizeSearch(search.Text)
     local rowIndex = 0
     for worldIndex, world in ipairs(Config.Worlds) do
         if catalogWorld == 0 or catalogWorld == worldIndex then
+            -- The summary remains visible in "owned only" mode: missing
+            -- species are needed to understand the next collection goal.
+            local set = setProgress[world.Id]
+            local reward = Config.CollectionRewards[world.Id] or 0
+            rowIndex += 1
+            local banner = frame("Collection_" .. world.Id, scroll, PANEL)
+            banner.Size = UDim2.new(1, -4, 0, 55)
+            banner.LayoutOrder = rowIndex
+            banner.ZIndex = 13
+            local caption = text("SetProgress", banner, world.Name .. "  •  "
+                .. set.Count .. "/" .. set.Total .. "  •  +" .. reward .. "%",
+                12, set.Complete and GOLD or WHITE)
+            caption.Position = UDim2.fromOffset(10, 5)
+            caption.Size = UDim2.new(1, -20, 0, 27)
+            caption.TextXAlignment = Enum.TextXAlignment.Left
+            caption.ZIndex = 14
+            local background = Instance.new("Frame")
+            background.Name = "SetBar"
+            background.Position = UDim2.new(0, 10, 1, -13)
+            background.Size = UDim2.new(1, -20, 0, 5)
+            background.BackgroundColor3 = DARK
+            background.BorderSizePixel = 0
+            background.ZIndex = 14
+            background.Parent = banner
+            rounded(background, 4)
+            local fill = Instance.new("Frame")
+            fill.Name = "Fill"
+            fill.Size = UDim2.fromScale(set.Count / math.max(1, set.Total), 1)
+            fill.BackgroundColor3 = set.Complete and GOLD or BLUE
+            fill.BorderSizePixel = 0
+            fill.ZIndex = 15
+            fill.Parent = background
+            rounded(fill, 4)
             local egg = Config.Eggs[world.EggId]
             if egg then
                 for _, drop in ipairs(egg.Drops) do
