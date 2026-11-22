@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.33
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.34
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -939,6 +939,23 @@ local function releasePet(player, p, requestedId)
 end
 
 
+-- Server-owned bulk cleanup: no client-supplied IDs, species, or counts.
+-- Equipped pets and collection species remain. No ID recycling or rewards.
+local function releaseDuplicates(player, p)
+    local ids = Config.DuplicateReleaseIds(p.Pets, p.Equipped)
+    if #ids == 0 then
+        notify(player, "Нет дубликатов, которые можно безопасно отпустить")
+        return false
+    end
+    local remove = {}
+    for _, id in ipairs(ids) do remove[id] = true end
+    for index = #p.Pets, 1, -1 do
+        if remove[p.Pets[index].Id] then table.remove(p.Pets, index) end
+    end
+    notify(player, "Освобождено мест: " .. #ids .. ". Коллекция и надетые питомцы сохранены")
+    return true
+end
+
 -- Fusion is an atomic server-side inventory exchange, with no client-provided
 -- pet IDs or target rarity. Equipped pets are protected, and no reward counter
 -- is incremented: fusion is not a hatch and gives no quest progress.
@@ -1162,6 +1179,9 @@ local function handleAction(player, actionName, argument)
         petsChanged = changed
     elseif actionName == "ReleasePet" then
         changed = releasePet(player, p, argument)
+        petsChanged = changed
+    elseif actionName == "ReleaseDuplicates" then
+        changed = releaseDuplicates(player, p)
         petsChanged = changed
     elseif actionName == "FusePets" or actionName == "FusePetsMax" then
         changed = fusePets(player, p, argument, actionName == "FusePetsMax")

@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.33
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.34
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -231,7 +231,7 @@ equippedFilter.ZIndex = 12
 local scroll = Instance.new("ScrollingFrame")
 scroll.Name = "Inventory"
 scroll.Position = UDim2.new(0, 12, 0, 231)
-scroll.Size = UDim2.new(1, -24, 1, -298)
+scroll.Size = UDim2.new(1, -24, 1, -340)
 scroll.BackgroundColor3 = DARK
 scroll.BackgroundTransparency = 0.2
 scroll.BorderSizePixel = 0
@@ -264,6 +264,12 @@ unequip.Position = UDim2.new(0.64, 4, 1, -12)
 unequip.Size = UDim2.new(0.36, -16, 0, 47)
 unequip.TextSize = 12
 unequip.ZIndex = 12
+local cleanup = button("ReleaseDuplicates", modal, "🧹 НЕТ ДУБЛИКАТОВ", BLUE)
+cleanup.AnchorPoint = Vector2.new(0, 1)
+cleanup.Position = UDim2.new(0, 12, 1, -66)
+cleanup.Size = UDim2.new(1, -24, 0, 34)
+cleanup.TextSize = 11
+cleanup.ZIndex = 12
 
 local currentPets = {}
 local currentEquipped = {}
@@ -280,6 +286,8 @@ local pendingFuseButton = nil
 local pendingFuseAction = nil
 local pendingFuseLabel = nil
 local pendingFuseNonce = 0
+local pendingCleanup = false
+local cleanupNonce = 0
 local sortMode = "Power" -- Power / Rarity / New / Old
 local equippedOnly = false
 local sortNames = {Power = "СИЛА ↓", Rarity = "РЕДКОСТЬ", New = "НОВЫЕ", Old = "СТАРЫЕ"}
@@ -302,6 +310,7 @@ local function syncPetTabUI()
     equippedFilter.BackgroundColor3 = highlighted and BLUE or GOLD
     best.Visible = not isCatalog
     unequip.Visible = not isCatalog
+    cleanup.Visible = not isCatalog
 end
 -- Lua string.lower handles ASCII but not Cyrillic. Small explicit mapping keeps
 -- Russian-name searches case-insensitive without any external dependencies.
@@ -332,6 +341,23 @@ local function clearFuseConfirmation()
     pendingFuseLabel = nil
     pendingFuseNonce += 1
 end
+
+local function refreshCleanup()
+    local count = #Config.DuplicateReleaseIds(currentPets, currentEquipped)
+    local available = count > 0 and player:GetAttribute("DataReady") == true
+        and player:GetAttribute("DataStatus") == "Ready"
+    cleanup.Text = count > 0 and ("🧹 УБРАТЬ ДУБЛИКАТЫ ×" .. count) or "🧹 НЕТ ДУБЛИКАТОВ"
+    cleanup.Active = available
+    cleanup.AutoButtonColor = available
+    cleanup.BackgroundTransparency = available and 0 or 0.55
+    return count
+end
+local function clearCleanupConfirmation()
+    pendingCleanup = false
+    cleanupNonce += 1
+    refreshCleanup()
+end
+
 -- A local two-tap confirmation is for accidental-click protection only.
 -- The server rechecks pet ownership, equipment and limits on every action.
 local function confirmFusion(targetButton, species, action)
@@ -353,6 +379,7 @@ local function confirmFusion(targetButton, species, action)
         return
     end
     clearReleaseConfirmation()
+    clearCleanupConfirmation()
     clearFuseConfirmation()
     pendingFuseButton = targetButton
     pendingFuseSpecies = species
@@ -470,6 +497,7 @@ local function repaintPets()
     petsDirty = false
     clearReleaseConfirmation() -- destroyed row buttons must not retain confirmations
     clearFuseConfirmation()
+    clearCleanupConfirmation()
     for _, child in ipairs(scroll:GetChildren()) do
         if child:IsA("Frame") then child:Destroy() end
     end
@@ -612,6 +640,7 @@ local function repaintPets()
                     release.Active = false
                 else
                     clearFuseConfirmation()
+                    clearCleanupConfirmation()
                     clearReleaseConfirmation()
                     pendingReleaseId = item.Id
                     pendingReleaseButton = release
@@ -811,7 +840,7 @@ local function resize()
         sortButton.Position = UDim2.new(0.49, 6, 0, 145)
         equippedFilter.Position = UDim2.new(0.745, 2, 0, 145)
         scroll.Position = UDim2.new(0, 12, 0, 185)
-        scroll.Size = UDim2.new(1, -24, 1, -252)
+        scroll.Size = UDim2.new(1, -24, 1, -292)
     else
         odds.Visible = true
         inventoryTitle.Position = UDim2.fromOffset(12, 160)
@@ -820,7 +849,7 @@ local function resize()
         sortButton.Position = UDim2.new(0.49, 6, 0, 190)
         equippedFilter.Position = UDim2.new(0.745, 2, 0, 190)
         scroll.Position = UDim2.new(0, 12, 0, 231)
-        scroll.Size = UDim2.new(1, -24, 1, -298)
+        scroll.Size = UDim2.new(1, -24, 1, -340)
     end
     inventoryTitle.Size = UDim2.new(0.69, -12, 0, 28)
     catalogButton.TextSize = modal.Size.X.Offset < 420 and 10 or 11
@@ -882,6 +911,7 @@ OpenEggShop.OnClientEvent:Connect(openPets)
 close.Activated:Connect(function()
     clearReleaseConfirmation()
     clearFuseConfirmation()
+    clearCleanupConfirmation()
     shade.Visible = false
 end)
 hatch.Activated:Connect(function()
@@ -894,14 +924,43 @@ hatchMax.Activated:Connect(function()
     if ready() and hatchMax.Active then Action:FireServer("HatchMax") end
 end)
 best.Activated:Connect(function()
+    clearCleanupConfirmation()
     if ready() then Action:FireServer("EquipBest") end
 end)
 unequip.Activated:Connect(function()
     clearReleaseConfirmation()
     clearFuseConfirmation()
+    clearCleanupConfirmation()
     if ready() and #currentEquipped > 0 then Action:FireServer("UnequipAll") end
 end)
+cleanup.Activated:Connect(function()
+    if player:GetAttribute("DataReady") ~= true or player:GetAttribute("DataStatus") ~= "Ready"
+        or not cleanup.Active then return end
+    local count = #Config.DuplicateReleaseIds(currentPets, currentEquipped)
+    if count < 1 then refreshCleanup() return end
+    if pendingCleanup then
+        clearCleanupConfirmation()
+        cleanup.Text = "..."
+        cleanup.Active = false
+        Action:FireServer("ReleaseDuplicates")
+        -- Failed server requests do not cause PetState, so restore the button.
+        task.delay(2, function()
+            if cleanup.Parent and cleanup.Text == "..." then refreshCleanup() end
+        end)
+    else
+        clearReleaseConfirmation()
+        clearFuseConfirmation()
+        clearCleanupConfirmation()
+        pendingCleanup = true
+        cleanup.Text = "ОТПУСТИТЬ ДУБЛИКАТЫ ×" .. count .. "?"
+        local nonce = cleanupNonce
+        task.delay(4, function()
+            if pendingCleanup and cleanupNonce == nonce then clearCleanupConfirmation() end
+        end)
+    end
+end)
 local function updateFilter()
+    clearCleanupConfirmation()
     clearReleaseConfirmation()
     clearFuseConfirmation()
     scroll.CanvasPosition = Vector2.new(0, 0)
@@ -910,6 +969,7 @@ local function updateFilter()
 end
 search:GetPropertyChangedSignal("Text"):Connect(updateFilter)
 catalogButton.Activated:Connect(function()
+    clearCleanupConfirmation()
     petsTab = petsTab == "Inventory" and "Catalog" or "Inventory"
     search.Text = ""
     syncPetTabUI()
@@ -944,6 +1004,7 @@ PetState.OnClientEvent:Connect(function(inventory, equipped)
     clearReleaseConfirmation()
     currentPets = inventory
     currentEquipped = equipped
+    clearCleanupConfirmation()
     petsDirty = true
     if shade.Visible then repaintPets() end
 end)
