@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.36 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.37 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.36
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.37
 local Config = {}
-Config.Version = "Alpha 0.9.36"
+Config.Version = "Alpha 0.9.37"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -777,7 +777,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.36
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.37
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -1682,8 +1682,26 @@ local function equipBest(player, p)
         if bonusA == bonusB then return a.Id < b.Id end
         return bonusA > bonusB
     end)
+    local desired = {}
+    for i = 1, math.min(#sorted, Config.MaxEquippedPets) do
+        table.insert(desired, sorted[i].Id)
+    end
+    -- Equipping the same set is a no-op even if its order differs. Do not
+    -- dirty DataStore or fire an inventory refresh for an identical loadout.
+    local unchanged = #desired == #p.Equipped
+    if unchanged then
+        local currentlyEquipped = {}
+        for _, id in ipairs(p.Equipped) do currentlyEquipped[id] = true end
+        for _, id in ipairs(desired) do
+            if not currentlyEquipped[id] then unchanged = false break end
+        end
+    end
+    if unchanged then
+        notify(player, "Лучшие питомцы уже экипированы")
+        return false
+    end
     table.clear(p.Equipped)
-    for i = 1, math.min(#sorted, Config.MaxEquippedPets) do table.insert(p.Equipped, sorted[i].Id) end
+    for _, id in ipairs(desired) do table.insert(p.Equipped, id) end
     notify(player, "Экипированы лучшие питомцы")
     return true
 end
@@ -3083,7 +3101,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.36
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.37
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3206,6 +3224,35 @@ local upgrade = button("Upgrade", actions, "УЛУЧШИТЬ", BLUE)
 local bulkUpgrade = button("Upgrade5", actions, "⚡ ×5", BLUE)
 local maxUpgrade = button("UpgradeMax", actions, "⚡ MAX", BLUE)
 local rebirth = button("Rebirth", actions, "ПЕРЕРОЖДЕНИЕ", GOLD)
+-- Two-step local confirmation: rebirth resets tap upgrades and click balance.
+-- The server still checks the real price and available balance on receipt.
+local rebirthPending = false
+local rebirthTarget = nil
+local rebirthNonce = 0
+local function clearRebirthConfirmation()
+    rebirthPending = false
+    rebirthTarget = nil
+    rebirthNonce += 1
+end
+local function refreshRebirthButton()
+    local count = attr("Rebirths")
+    local cost = Config.RebirthCost(count)
+    local canRebirth = cost ~= nil and attr("Clicks") >= cost
+        and player:GetAttribute("DataReady") == true
+        and player:GetAttribute("DataStatus") == "Ready"
+    if rebirthPending and (not canRebirth or rebirthTarget ~= count) then
+        clearRebirthConfirmation()
+    end
+    rebirth.Active = canRebirth
+    rebirth.AutoButtonColor = canRebirth
+    rebirth.BackgroundColor3 = canRebirth and GOLD or MUTED
+    if rebirthPending then
+        rebirth.Text = "⚠ ПОДТВЕРДИТЬ\nСБРОС УЛУЧШЕНИЙ"
+    else
+        rebirth.Text = cost and ("🔄 ПЕРЕРОДИТЬСЯ\n" .. pretty(cost) .. " кликов")
+            or "МАКС. ПЕРЕРОЖДЕНИЯ"
+    end
+end
 local petsButton = button("Pets", gui, "🐾 ПИТОМЦЫ", BLUE)
 local autoTapButton = button("AutoTap", gui, "🤖 АВТОКЛИК", GOLD)
 autoTapButton.TextSize = 12
@@ -3725,9 +3772,17 @@ local function repaintPets()
                     or marked[item.Id] or not release.Active then return end
                 if pendingReleaseId == item.Id and pendingReleaseButton == release then
                     clearReleaseConfirmation()
-                    Action:FireServer("ReleasePet", item.Id)
                     release.Text = "..."
                     release.Active = false
+                    Action:FireServer("ReleasePet", item.Id)
+                    -- A rejected/rate-limited server request sends no PetState.
+                    -- Restore this row instead of disabling it for the session.
+                    task.delay(2, function()
+                        if release.Parent and release.Text == "..." then
+                            release.Text = "ОТПУСТИТЬ"
+                            release.Active = true
+                        end
+                    end)
                 else
                     clearFuseConfirmation()
                     clearCleanupConfirmation()
@@ -3795,8 +3850,7 @@ local function update()
     maxUpgrade.Text = maxCost and ("⚡ MAX ×" .. maxLevels .. "\n" .. pretty(maxCost))
         or (attr("TapLevel") >= Config.MaxTapLevel and "МАКС." or "НЕТ КЛИКОВ")
     maxUpgrade.BackgroundColor3 = maxCost and BLUE or MUTED
-    local costR = Config.RebirthCost(attr("Rebirths"))
-    rebirth.Text = costR and ("🔄 ПЕРЕРОДИТЬСЯ\n" .. pretty(costR) .. " кликов") or "МАКС. ПЕРЕРОЖДЕНИЯ"
+    refreshRebirthButton()
     clickButton.Text = "+" .. pretty(attr("ClickPower")) .. " КЛИК"
     local unlocked = player:GetAttribute("AutoTapUnlocked") == true
     local enabled = player:GetAttribute("AutoTapEnabled") == true
@@ -4011,7 +4065,28 @@ maxUpgrade.Activated:Connect(function()
     if ready() then Action:FireServer("UpgradeMax") end
 end)
 rebirth.Activated:Connect(function()
-    if ready() then Action:FireServer("Rebirth") end
+    if not ready() then return end
+    refreshRebirthButton()
+    if not rebirth.Active then return end
+    if rebirthPending then
+        -- Rebirth is processed once. The server remains authoritative even
+        -- if the balance or the rebirth price changes before arrival.
+        clearRebirthConfirmation()
+        refreshRebirthButton()
+        Action:FireServer("Rebirth")
+        return
+    end
+    rebirthPending = true
+    rebirthTarget = attr("Rebirths")
+    rebirthNonce += 1
+    local ticket = rebirthNonce
+    refreshRebirthButton()
+    task.delay(5, function()
+        if ticket == rebirthNonce and rebirthPending then
+            clearRebirthConfirmation()
+            if rebirth.Parent then refreshRebirthButton() end
+        end
+    end)
 end)
 local function openPets()
     player:SetAttribute("CompactMenuOpen", false)
@@ -7100,4 +7175,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.36 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.37 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
