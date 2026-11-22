@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.34
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.35
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -170,19 +170,24 @@ close.Size = UDim2.fromOffset(43, 38)
 close.ZIndex = 12
 local hatch = button("Hatch", modal, "🥚 ОТКРЫТЬ ЯЙЦО", BLUE)
 hatch.Position = UDim2.new(0, 12, 0, 60)
-hatch.Size = UDim2.new(0.5, -14, 0, 53)
+hatch.Size = UDim2.new(0.37, -14, 0, 53)
 hatch.TextSize = 13
 hatch.ZIndex = 12
 local hatch3 = button("Hatch3", modal, "🥚 ×3", GOLD)
-hatch3.Position = UDim2.new(0.5, 4, 0, 60)
-hatch3.Size = UDim2.new(0.25, -9, 0, 53)
+hatch3.Position = UDim2.new(0.37, 4, 0, 60)
+hatch3.Size = UDim2.new(0.20, -9, 0, 53)
 hatch3.TextSize = 12
 hatch3.ZIndex = 12
 local hatchMax = button("HatchMax", modal, "🥚 MAX", GOLD)
-hatchMax.Position = UDim2.new(0.75, 1, 0, 60)
-hatchMax.Size = UDim2.new(0.25, -13, 0, 53)
+hatchMax.Position = UDim2.new(0.57, 1, 0, 60)
+hatchMax.Size = UDim2.new(0.20, -9, 0, 53)
 hatchMax.TextSize = 11
 hatchMax.ZIndex = 12
+local autoHatch = button("AutoHatch", modal, "🔒 АВТО", GOLD)
+autoHatch.Position = UDim2.new(0.77, -2, 0, 60)
+autoHatch.Size = UDim2.new(0.23, -10, 0, 53)
+autoHatch.TextSize = 11
+autoHatch.ZIndex = 12
 local odds = text("Odds", modal, "Шансы выпадения", 12, MUTED)
 odds.Position = UDim2.new(0, 12, 0, 118)
 odds.Size = UDim2.new(1, -24, 0, 37)
@@ -711,6 +716,21 @@ local function update()
         autoTapButton.Text = enabled and "🤖 АВТОКЛИК • ВКЛ" or "🤖 АВТОКЛИК • ВЫКЛ"
         autoTapButton.BackgroundColor3 = enabled and BLUE or GOLD
     end
+    local autoHatchUnlocked = player:GetAttribute("AutoHatchUnlocked") == true
+    local autoHatchEnabled = player:GetAttribute("AutoHatchEnabled") == true
+    local autoHatchReady = autoHatchUnlocked and player:GetAttribute("DataStatus") == "Ready"
+        and player:GetAttribute("DataReady") == true
+    autoHatch.Active = autoHatchReady
+    autoHatch.AutoButtonColor = autoHatchReady
+    if not autoHatchUnlocked then
+        autoHatch.Text = "🔒 АВТО\n" .. Config.AutoHatch.UnlockRebirths .. " 🔄"
+    elseif not autoHatchReady then
+        autoHatch.Text = autoHatchEnabled and "🤖 АВТО\nПАУЗА" or "🤖 АВТО\nНЕТ"
+    else
+        autoHatch.Text = autoHatchEnabled and "🤖 АВТО\nВКЛ" or "🤖 АВТО\nВЫКЛ"
+    end
+    autoHatch.BackgroundColor3 = not autoHatchReady and MUTED
+        or (autoHatchEnabled and BLUE or GOLD)
     if player:GetAttribute("DataStatus") == "SaveRetry" then
         toast.Text = "Сохранение недоступно: действия приостановлены"
     elseif player:GetAttribute("DataStatus") == "Ready"
@@ -780,7 +800,7 @@ local function resize()
         modal.Size = UDim2.new(1, -24, 0, math.min(h - 28, 570))
         heading.TextSize = 18
         hatch.TextSize = 11
-        hatch3.TextSize, hatchMax.TextSize = 10, 10
+        hatch3.TextSize, hatchMax.TextSize, autoHatch.TextSize = 10, 10, 10
         search.TextSize = 11
         sortButton.TextSize = 10
         equippedFilter.TextSize = 10
@@ -823,7 +843,7 @@ local function resize()
         modal.Size = UDim2.fromOffset(math.min(w - 90, 560), math.min(h - 80, 590))
         heading.TextSize = 22
         hatch.TextSize = 13
-        hatch3.TextSize, hatchMax.TextSize = 12, 11
+        hatch3.TextSize, hatchMax.TextSize, autoHatch.TextSize = 12, 11, 11
         search.TextSize = 12
         sortButton.TextSize = 11
         equippedFilter.TextSize = 11
@@ -923,6 +943,9 @@ end)
 hatchMax.Activated:Connect(function()
     if ready() and hatchMax.Active then Action:FireServer("HatchMax") end
 end)
+autoHatch.Activated:Connect(function()
+    if ready() and autoHatch.Active then Action:FireServer("ToggleAutoHatch") end
+end)
 best.Activated:Connect(function()
     clearCleanupConfirmation()
     if ready() then Action:FireServer("EquipBest") end
@@ -1020,7 +1043,7 @@ local function scheduleUpdate()
         if gui.Parent then update() end
     end)
 end
-for _, key in ipairs({"Clicks", "Gems", "Rebirths", "TapLevel", "ClickPower", "PetBonus", "PetCount", "NextPetId", "DataReady", "SavingEnabled", "DataStatus", "World", "AutoTapEnabled", "AutoTapUnlocked"}) do
+for _, key in ipairs({"Clicks", "Gems", "Rebirths", "TapLevel", "ClickPower", "PetBonus", "PetCount", "NextPetId", "DataReady", "SavingEnabled", "DataStatus", "World", "AutoTapEnabled", "AutoTapUnlocked", "AutoHatchEnabled", "AutoHatchUnlocked"}) do
     player:GetAttributeChangedSignal(key):Connect(scheduleUpdate)
 end
 player:GetAttributeChangedSignal("DataReady"):Connect(function()

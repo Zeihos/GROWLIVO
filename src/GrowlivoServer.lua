@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.34
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.35
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -65,6 +65,9 @@ local runeSessions = {}
 -- Auto tap state is session-only and keyed by player. Server controls all awards.
 local autoTapEnabled = {}
 local nextAutoTap = {}
+-- No new DataStore fields: automation is opted into per player session.
+local autoHatchEnabled = {}
+local nextAutoHatch = {}
 -- Per-session combo: the client cannot submit streak counts or reward amounts.
 local tapCombos = {}
 local function recordManualCombo(player)
@@ -490,6 +493,7 @@ local function sync(player, trackMutation)
     setPlayerAttribute(player, "TapLevel", p.TapLevel)
     setPlayerAttribute(player, "Rebirths", p.Rebirths)
     setPlayerAttribute(player, "AutoTapUnlocked", p.Rebirths >= Config.AutoTap.UnlockRebirths)
+    setPlayerAttribute(player, "AutoHatchUnlocked", p.Rebirths >= Config.AutoHatch.UnlockRebirths)
     setPlayerAttribute(player, "PetBonus", bonus)
     setPlayerAttribute(player, "PetCount", #p.Pets)
     -- Preview of the ID bound for hatch MAX. Never trusted on the server.
@@ -805,7 +809,7 @@ end
 -- Server-authoritative single, triple and MAX hatch. The MAX quote is
 -- derived from the server profile and capped to ten eggs per request.
 -- Never accept arbitrary client counts, egg IDs, drop chances or prices.
-local function hatch(player, p, quantity)
+local function hatch(player, p, quantity, silent)
     local isMax = quantity == "MAX"
     if not isMax and quantity ~= 1 and quantity ~= Config.MaxHatchBatch then
         return false
@@ -863,8 +867,10 @@ local function hatch(player, p, quantity)
         end
     end
     tutorialAdvance(player, p, "Hatch")
-    notify(player, quantity == 1 and ("Новый питомец: " .. results[1].Name)
-        or ("Открыто яиц: " .. quantity .. "! Инвентарь обновлён"))
+    if not silent then
+        notify(player, quantity == 1 and ("Новый питомец: " .. results[1].Name)
+            or ("Открыто яиц: " .. quantity .. "! Инвентарь обновлён"))
+    end
     return true
 end
 local function equip(player, p, requestedId)
@@ -1109,7 +1115,19 @@ local function handleAction(player, actionName, argument)
         if dayChanged then queueEvent(player) end
     end
     local changed, petsChanged, progressChanged, uiChanged = false, false, false, false
-    if actionName == "SetSetting" then
+    if actionName == "ToggleAutoHatch" then
+        if p.Rebirths < Config.AutoHatch.UnlockRebirths then
+            notify(player, "Автояйцо откроется после " .. Config.AutoHatch.UnlockRebirths .. " перерождений")
+            return
+        end
+        local enabled = autoHatchEnabled[player] ~= true
+        autoHatchEnabled[player] = enabled or nil
+        nextAutoHatch[player] = enabled and (os.clock() + Config.AutoHatch.IntervalSeconds) or nil
+        setPlayerAttribute(player, "AutoHatchEnabled", enabled)
+        notify(player, enabled and "Автояйцо включено: 1 яйцо каждые 12 секунд"
+            or "Автояйцо выключено")
+        return
+    elseif actionName == "SetSetting" then
         -- Only named boolean preferences may be written by clients.
         if typeof(argument) ~= "table" or typeof(argument.Key) ~= "string"
             or typeof(argument.Value) ~= "boolean" then return end
@@ -1421,6 +1439,8 @@ local function onJoin(player)
     player:SetAttribute("DataMode", Storage.Mode)
     player:SetAttribute("AutoTapEnabled", false)
     player:SetAttribute("AutoTapUnlocked", false)
+    player:SetAttribute("AutoHatchEnabled", false)
+    player:SetAttribute("AutoHatchUnlocked", false)
     player:SetAttribute("TapComboCount", 0)
     player:SetAttribute("TapComboMultiplier", 1)
     player:SetAttribute("TapComboExpiresAt", 0)
@@ -1522,6 +1542,7 @@ Players.PlayerRemoving:Connect(function(player)
     nextAutosave[player], recoveringSave[player], retryAttempts[player] = nil, nil, nil
     remoteBuckets[player], pendingTeleport[player], runeSessions[player] = nil, nil, nil
     autoTapEnabled[player], nextAutoTap[player], tapCombos[player] = nil, nil, nil
+    autoHatchEnabled[player], nextAutoHatch[player] = nil, nil
     -- Preserve finalizing[player] == "Done" for a concurrently running BindToClose.
     -- Weak player keys release this marker automatically after the Player is GC'd.
 end)
@@ -1553,6 +1574,37 @@ task.spawn(function()
                         awardTap(player, p, false)
                     end
                 end
+            end
+        end
+
+        -- Automatic eggs are purchased through the exact same authoritative
+        -- hatch() path as manual eggs. Never accept client counts, prices or
+        -- probabilities. No catch-up after a delayed scheduler iteration.
+        for player, enabled in pairs(autoHatchEnabled) do
+            if enabled and now >= (nextAutoHatch[player] or math.huge) then
+                nextAutoHatch[player] = now + Config.AutoHatch.IntervalSeconds
+                local p = profiles[player]
+                if p and isReady(player) and player.Parent == Players
+                    and p.Rebirths >= Config.AutoHatch.UnlockRebirths then
+                    local character = player.Character
+                    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                    if humanoid and humanoid.Health > 0 then
+                        local egg = Config.EggForWorld(p.World)
+                        -- Insufficient balance, capacity and ID exhaustion end
+                        -- the run rather than spamming failed hatch attempts.
+                        if not egg or p.Clicks < egg.Price or #p.Pets >= Config.MaxPetInventory
+                            or p.NextPetId > MAX_PET_ID then
+                            autoHatchEnabled[player], nextAutoHatch[player] = nil, nil
+                            setPlayerAttribute(player, "AutoHatchEnabled", false)
+                            notify(player, "Автояйцо остановлено: недостаточно кликов или места")
+                        elseif hatch(player, p, 1, true) then
+                            sync(player)
+                            pushPets(player)
+                            pushProgress(player)
+                        end
+                    end
+                end
+                -- SaveRetry, logout and death never produce delayed bonus eggs.
             end
         end
     end

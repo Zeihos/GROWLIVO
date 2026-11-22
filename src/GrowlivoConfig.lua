@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.34
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.35
 local Config = {}
-Config.Version = "Alpha 0.9.34"
+Config.Version = "Alpha 0.9.35"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -14,6 +14,9 @@ Config.MaxClicksPerSecond = 8
 -- Free progression feature: 2 rebirths unlocks 1 server-owned tap every 2 sec.
 -- Session toggle only: no purchases, no client-supplied tap counts, no new save fields.
 Config.AutoTap = {UnlockRebirths = 2, IntervalSeconds = 2}
+-- Unlockable, session-only automation. One server-priced egg every 12 seconds.
+-- Not a persistent setting: the player must opt in again each session.
+Config.AutoHatch = {UnlockRebirths = 5, IntervalSeconds = 12}
 -- Server-only streaks from accepted manual taps; no new persistent fields.
 Config.TapCombo = {WindowSeconds = 2.5, MaxStreak = 50,
     Tiers = {{Taps = 10, Multiplier = 1.10}, {Taps = 25, Multiplier = 1.25},
