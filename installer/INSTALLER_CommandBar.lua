@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.32 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.33 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.32
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.33
 local Config = {}
-Config.Version = "Alpha 0.9.32"
+Config.Version = "Alpha 0.9.33"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -46,7 +46,9 @@ Config.MaxTapLevel = 50
 Config.BulkUpgradeCount = 5 -- fixed server-owned batch size; clients never choose arbitrary counts
 Config.MaxRebirths = 1000
 Config.MaxPetInventory = 60
+Config.MaxPetId = 2000000000 -- shared client preview / server validation limit
 Config.MaxHatchBatch = 3
+Config.MaxHatchMaxBatch = 10 -- never accept a client-selected amount
 Config.MaxEquippedPets = 3
 Config.EggPrice = 150 -- compatibility with old UI/tests
 -- Non-persistent rune expedition: three unique runes per world unlock a temporary
@@ -176,6 +178,30 @@ Config.Eggs = {
 function Config.EggForWorld(worldId)
     local world = Config.FindWorld(worldId)
     return world and Config.Eggs[world.EggId] or nil
+end
+
+-- Server-authoritative quote for the maximum affordable hatch batch.
+-- The server supplies its own profile balance, pet count and NextPetId.
+-- Clients use replicated attributes for a preview only.
+function Config.HatchMaxQuote(price, clicks, petCount, nextPetId)
+    if typeof(price) ~= "number" or typeof(clicks) ~= "number"
+        or typeof(petCount) ~= "number" or typeof(nextPetId) ~= "number"
+        or price ~= price or clicks ~= clicks
+        or petCount ~= petCount or nextPetId ~= nextPetId
+        or price == math.huge or clicks == math.huge
+        or petCount == math.huge or nextPetId == math.huge
+        or price <= 0 or clicks < 0 or petCount < 0
+        or nextPetId < 1 then
+        return nil, 0
+    end
+    local costPerEgg = math.floor(price)
+    if costPerEgg < 1 then return nil, 0 end
+    local freeInventory = math.max(0, Config.MaxPetInventory - math.floor(petCount))
+    local freeIds = math.max(0, Config.MaxPetId - math.floor(nextPetId) + 1)
+    local affordable = math.floor(clicks / costPerEgg)
+    local count = math.min(Config.MaxHatchMaxBatch, freeInventory, freeIds, affordable)
+    if count < 1 then return nil, 0 end
+    return costPerEgg * count, count
 end
 
 -- All goals are repeatable after UTC midnight; progress tracks actions, not purchased rewards.
@@ -724,7 +750,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.32
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.33
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -879,7 +905,7 @@ local function allowRemote(player)
     bucket.Tokens -= 1
     return true
 end
-local MAX_PET_ID = 2000000000
+local MAX_PET_ID = Config.MaxPetId
 local function int(value, default, minimum, maximum)
     if typeof(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
         return default
@@ -1218,6 +1244,8 @@ local function sync(player, trackMutation)
     setPlayerAttribute(player, "AutoTapUnlocked", p.Rebirths >= Config.AutoTap.UnlockRebirths)
     setPlayerAttribute(player, "PetBonus", bonus)
     setPlayerAttribute(player, "PetCount", #p.Pets)
+    -- Preview of the ID bound for hatch MAX. Never trusted on the server.
+    setPlayerAttribute(player, "NextPetId", p.NextPetId)
     setPlayerAttribute(player, "EquippedCount", #p.Equipped)
     setPlayerAttribute(player, "World", p.World)
     setPlayerAttribute(player, "ChestDay", p.ChestDay)
@@ -1526,12 +1554,25 @@ local function tutorialAdvance(player, p, kind)
         VisualEvent:FireClient(player, {Type = "TutorialStep", Step = p.TutorialStep})
     end
 end
--- Server-authoritative single and triple hatch. All costs/capacity are checked
--- before spending; no client-selected species, chance or price are accepted.
+-- Server-authoritative single, triple and MAX hatch. The MAX quote is
+-- derived from the server profile and capped to ten eggs per request.
+-- Never accept arbitrary client counts, egg IDs, drop chances or prices.
 local function hatch(player, p, quantity)
-    if quantity ~= 1 and quantity ~= Config.MaxHatchBatch then return false end
+    local isMax = quantity == "MAX"
+    if not isMax and quantity ~= 1 and quantity ~= Config.MaxHatchBatch then
+        return false
+    end
     local egg = Config.EggForWorld(p.World)
     if not egg then return false end
+    if isMax then
+        local _, affordable = Config.HatchMaxQuote(egg.Price, p.Clicks,
+            #p.Pets, p.NextPetId)
+        if affordable < 1 then
+            notify(player, "MAX: не хватает кликов, места или свободных ID")
+            return false
+        end
+        quantity = affordable
+    end
     local totalCost = egg.Price * quantity
     if #p.Pets + quantity > Config.MaxPetInventory then
         notify(player, "Недостаточно места для " .. quantity .. " питомцев")
@@ -1556,7 +1597,7 @@ local function hatch(player, p, quantity)
         table.insert(results, selected)
     end
     p.Clicks -= totalCost
-    for _, selected in ipairs(results) do
+    for i, selected in ipairs(results) do
         local petId = p.NextPetId
         table.insert(p.Pets, {Id = petId, Species = selected.Id})
         if #p.Equipped < Config.MaxEquippedPets then
@@ -1566,7 +1607,12 @@ local function hatch(player, p, quantity)
         p.HatchedTotal = math.min(Config.MaxTotalClicks, p.HatchedTotal + 1)
         addQuest(p, "Hatch")
         countError("EggsOpened")
-        VisualEvent:FireClient(player, {Type = "Hatch", Species = selected.Id})
+        -- Ten simultaneous hatch effects overwhelm lower-end mobile devices.
+        -- Keep the visual burst to the existing triple-hatch limit; all pets,
+        -- per-egg quests and achievements are still processed on the server.
+        if not isMax or i <= Config.MaxHatchBatch then
+            VisualEvent:FireClient(player, {Type = "Hatch", Species = selected.Id})
+        end
     end
     tutorialAdvance(player, p, "Hatch")
     notify(player, quantity == 1 and ("Новый питомец: " .. results[1].Name)
@@ -1851,8 +1897,11 @@ local function handleAction(player, actionName, argument)
             notify(player, "Перерождение! Получены кристаллы")
             VisualEvent:FireClient(player, {Type = "Rebirth"})
         end
-    elseif actionName == "Hatch" or actionName == "Hatch3" then
-        changed = hatch(player, p, actionName == "Hatch3" and Config.MaxHatchBatch or 1)
+    elseif actionName == "Hatch" or actionName == "Hatch3"
+        or actionName == "HatchMax" then
+        local count = actionName == "HatchMax" and "MAX"
+            or (actionName == "Hatch3" and Config.MaxHatchBatch or 1)
+        changed = hatch(player, p, count)
         petsChanged, progressChanged = changed, changed
     elseif actionName == "ToggleEquip" then
         changed = equip(player, p, argument)
@@ -2931,7 +2980,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.32
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.33
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3103,14 +3152,19 @@ close.Size = UDim2.fromOffset(43, 38)
 close.ZIndex = 12
 local hatch = button("Hatch", modal, "🥚 ОТКРЫТЬ ЯЙЦО", BLUE)
 hatch.Position = UDim2.new(0, 12, 0, 60)
-hatch.Size = UDim2.new(0.64, -14, 0, 53)
-hatch.TextSize = 15
+hatch.Size = UDim2.new(0.5, -14, 0, 53)
+hatch.TextSize = 13
 hatch.ZIndex = 12
 local hatch3 = button("Hatch3", modal, "🥚 ×3", GOLD)
-hatch3.Position = UDim2.new(0.64, 4, 0, 60)
-hatch3.Size = UDim2.new(0.36, -16, 0, 53)
-hatch3.TextSize = 14
+hatch3.Position = UDim2.new(0.5, 4, 0, 60)
+hatch3.Size = UDim2.new(0.25, -9, 0, 53)
+hatch3.TextSize = 12
 hatch3.ZIndex = 12
+local hatchMax = button("HatchMax", modal, "🥚 MAX", GOLD)
+hatchMax.Position = UDim2.new(0.75, 1, 0, 60)
+hatchMax.Size = UDim2.new(0.25, -13, 0, 53)
+hatchMax.TextSize = 11
+hatchMax.ZIndex = 12
 local odds = text("Odds", modal, "Шансы выпадения", 12, MUTED)
 odds.Position = UDim2.new(0, 12, 0, 118)
 odds.Size = UDim2.new(1, -24, 0, 37)
@@ -3562,6 +3616,15 @@ local function refreshEgg()
     if not egg then return end
     hatch.Text = "🥚 " .. egg.Name .. "\n" .. pretty(egg.Price)
     hatch3.Text = "🥚 ×3\n" .. pretty(egg.Price * Config.MaxHatchBatch)
+    local maxCost, maxCount = Config.HatchMaxQuote(egg.Price, attr("Clicks"),
+        attr("PetCount"), attr("NextPetId"))
+    hatchMax.Text = maxCost and ("🥚 ×" .. maxCount .. "\n" .. pretty(maxCost))
+        or "🥚 MAX\nНЕТ"
+    local available = maxCost ~= nil and player:GetAttribute("DataReady") == true
+        and player:GetAttribute("DataStatus") == "Ready"
+    hatchMax.Active = available
+    hatchMax.AutoButtonColor = available
+    hatchMax.BackgroundColor3 = available and GOLD or MUTED
     local pieces = {}
     for _, drop in ipairs(egg.Drops) do
         local pet = Config.FindPet(drop.Species)
@@ -3669,7 +3732,8 @@ local function resize()
         toast.Size = UDim2.new(1, -20, 0, 42)
         modal.Size = UDim2.new(1, -24, 0, math.min(h - 28, 570))
         heading.TextSize = 18
-        hatch.TextSize = 13
+        hatch.TextSize = 11
+        hatch3.TextSize, hatchMax.TextSize = 10, 10
         search.TextSize = 11
         sortButton.TextSize = 10
         equippedFilter.TextSize = 10
@@ -3711,7 +3775,8 @@ local function resize()
         toast.Size = UDim2.fromOffset(440, 42)
         modal.Size = UDim2.fromOffset(math.min(w - 90, 560), math.min(h - 80, 590))
         heading.TextSize = 22
-        hatch.TextSize = 16
+        hatch.TextSize = 13
+        hatch3.TextSize, hatchMax.TextSize = 12, 11
         search.TextSize = 12
         sortButton.TextSize = 11
         equippedFilter.TextSize = 11
@@ -3807,6 +3872,9 @@ end)
 hatch3.Activated:Connect(function()
     if ready() then Action:FireServer("Hatch3") end
 end)
+hatchMax.Activated:Connect(function()
+    if ready() and hatchMax.Active then Action:FireServer("HatchMax") end
+end)
 best.Activated:Connect(function()
     if ready() then Action:FireServer("EquipBest") end
 end)
@@ -3873,7 +3941,7 @@ local function scheduleUpdate()
         if gui.Parent then update() end
     end)
 end
-for _, key in ipairs({"Clicks", "Gems", "Rebirths", "TapLevel", "ClickPower", "PetBonus", "PetCount", "DataReady", "SavingEnabled", "DataStatus", "World", "AutoTapEnabled", "AutoTapUnlocked"}) do
+for _, key in ipairs({"Clicks", "Gems", "Rebirths", "TapLevel", "ClickPower", "PetBonus", "PetCount", "NextPetId", "DataReady", "SavingEnabled", "DataStatus", "World", "AutoTapEnabled", "AutoTapUnlocked"}) do
     player:GetAttributeChangedSignal(key):Connect(scheduleUpdate)
 end
 player:GetAttributeChangedSignal("DataReady"):Connect(function()
@@ -6836,4 +6904,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.32 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.33 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")

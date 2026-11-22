@@ -1,4 +1,4 @@
--- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.32
+-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.33
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -170,14 +170,19 @@ close.Size = UDim2.fromOffset(43, 38)
 close.ZIndex = 12
 local hatch = button("Hatch", modal, "🥚 ОТКРЫТЬ ЯЙЦО", BLUE)
 hatch.Position = UDim2.new(0, 12, 0, 60)
-hatch.Size = UDim2.new(0.64, -14, 0, 53)
-hatch.TextSize = 15
+hatch.Size = UDim2.new(0.5, -14, 0, 53)
+hatch.TextSize = 13
 hatch.ZIndex = 12
 local hatch3 = button("Hatch3", modal, "🥚 ×3", GOLD)
-hatch3.Position = UDim2.new(0.64, 4, 0, 60)
-hatch3.Size = UDim2.new(0.36, -16, 0, 53)
-hatch3.TextSize = 14
+hatch3.Position = UDim2.new(0.5, 4, 0, 60)
+hatch3.Size = UDim2.new(0.25, -9, 0, 53)
+hatch3.TextSize = 12
 hatch3.ZIndex = 12
+local hatchMax = button("HatchMax", modal, "🥚 MAX", GOLD)
+hatchMax.Position = UDim2.new(0.75, 1, 0, 60)
+hatchMax.Size = UDim2.new(0.25, -13, 0, 53)
+hatchMax.TextSize = 11
+hatchMax.ZIndex = 12
 local odds = text("Odds", modal, "Шансы выпадения", 12, MUTED)
 odds.Position = UDim2.new(0, 12, 0, 118)
 odds.Size = UDim2.new(1, -24, 0, 37)
@@ -629,6 +634,15 @@ local function refreshEgg()
     if not egg then return end
     hatch.Text = "🥚 " .. egg.Name .. "\n" .. pretty(egg.Price)
     hatch3.Text = "🥚 ×3\n" .. pretty(egg.Price * Config.MaxHatchBatch)
+    local maxCost, maxCount = Config.HatchMaxQuote(egg.Price, attr("Clicks"),
+        attr("PetCount"), attr("NextPetId"))
+    hatchMax.Text = maxCost and ("🥚 ×" .. maxCount .. "\n" .. pretty(maxCost))
+        or "🥚 MAX\nНЕТ"
+    local available = maxCost ~= nil and player:GetAttribute("DataReady") == true
+        and player:GetAttribute("DataStatus") == "Ready"
+    hatchMax.Active = available
+    hatchMax.AutoButtonColor = available
+    hatchMax.BackgroundColor3 = available and GOLD or MUTED
     local pieces = {}
     for _, drop in ipairs(egg.Drops) do
         local pet = Config.FindPet(drop.Species)
@@ -736,7 +750,8 @@ local function resize()
         toast.Size = UDim2.new(1, -20, 0, 42)
         modal.Size = UDim2.new(1, -24, 0, math.min(h - 28, 570))
         heading.TextSize = 18
-        hatch.TextSize = 13
+        hatch.TextSize = 11
+        hatch3.TextSize, hatchMax.TextSize = 10, 10
         search.TextSize = 11
         sortButton.TextSize = 10
         equippedFilter.TextSize = 10
@@ -778,7 +793,8 @@ local function resize()
         toast.Size = UDim2.fromOffset(440, 42)
         modal.Size = UDim2.fromOffset(math.min(w - 90, 560), math.min(h - 80, 590))
         heading.TextSize = 22
-        hatch.TextSize = 16
+        hatch.TextSize = 13
+        hatch3.TextSize, hatchMax.TextSize = 12, 11
         search.TextSize = 12
         sortButton.TextSize = 11
         equippedFilter.TextSize = 11
@@ -874,6 +890,9 @@ end)
 hatch3.Activated:Connect(function()
     if ready() then Action:FireServer("Hatch3") end
 end)
+hatchMax.Activated:Connect(function()
+    if ready() and hatchMax.Active then Action:FireServer("HatchMax") end
+end)
 best.Activated:Connect(function()
     if ready() then Action:FireServer("EquipBest") end
 end)
@@ -940,7 +959,7 @@ local function scheduleUpdate()
         if gui.Parent then update() end
     end)
 end
-for _, key in ipairs({"Clicks", "Gems", "Rebirths", "TapLevel", "ClickPower", "PetBonus", "PetCount", "DataReady", "SavingEnabled", "DataStatus", "World", "AutoTapEnabled", "AutoTapUnlocked"}) do
+for _, key in ipairs({"Clicks", "Gems", "Rebirths", "TapLevel", "ClickPower", "PetBonus", "PetCount", "NextPetId", "DataReady", "SavingEnabled", "DataStatus", "World", "AutoTapEnabled", "AutoTapUnlocked"}) do
     player:GetAttributeChangedSignal(key):Connect(scheduleUpdate)
 end
 player:GetAttributeChangedSignal("DataReady"):Connect(function()

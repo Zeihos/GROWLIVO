@@ -1,6 +1,6 @@
--- GROWLIVO / Shared economy and progression config / Alpha 0.9.32
+-- GROWLIVO / Shared economy and progression config / Alpha 0.9.33
 local Config = {}
-Config.Version = "Alpha 0.9.32"
+Config.Version = "Alpha 0.9.33"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -37,7 +37,9 @@ Config.MaxTapLevel = 50
 Config.BulkUpgradeCount = 5 -- fixed server-owned batch size; clients never choose arbitrary counts
 Config.MaxRebirths = 1000
 Config.MaxPetInventory = 60
+Config.MaxPetId = 2000000000 -- shared client preview / server validation limit
 Config.MaxHatchBatch = 3
+Config.MaxHatchMaxBatch = 10 -- never accept a client-selected amount
 Config.MaxEquippedPets = 3
 Config.EggPrice = 150 -- compatibility with old UI/tests
 -- Non-persistent rune expedition: three unique runes per world unlock a temporary
@@ -167,6 +169,30 @@ Config.Eggs = {
 function Config.EggForWorld(worldId)
     local world = Config.FindWorld(worldId)
     return world and Config.Eggs[world.EggId] or nil
+end
+
+-- Server-authoritative quote for the maximum affordable hatch batch.
+-- The server supplies its own profile balance, pet count and NextPetId.
+-- Clients use replicated attributes for a preview only.
+function Config.HatchMaxQuote(price, clicks, petCount, nextPetId)
+    if typeof(price) ~= "number" or typeof(clicks) ~= "number"
+        or typeof(petCount) ~= "number" or typeof(nextPetId) ~= "number"
+        or price ~= price or clicks ~= clicks
+        or petCount ~= petCount or nextPetId ~= nextPetId
+        or price == math.huge or clicks == math.huge
+        or petCount == math.huge or nextPetId == math.huge
+        or price <= 0 or clicks < 0 or petCount < 0
+        or nextPetId < 1 then
+        return nil, 0
+    end
+    local costPerEgg = math.floor(price)
+    if costPerEgg < 1 then return nil, 0 end
+    local freeInventory = math.max(0, Config.MaxPetInventory - math.floor(petCount))
+    local freeIds = math.max(0, Config.MaxPetId - math.floor(nextPetId) + 1)
+    local affordable = math.floor(clicks / costPerEgg)
+    local count = math.min(Config.MaxHatchMaxBatch, freeInventory, freeIds, affordable)
+    if count < 1 then return nil, 0 end
+    return costPerEgg * count, count
 end
 
 -- All goals are repeatable after UTC midnight; progress tracks actions, not purchased rewards.

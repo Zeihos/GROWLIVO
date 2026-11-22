@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.32
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.33
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -153,7 +153,7 @@ local function allowRemote(player)
     bucket.Tokens -= 1
     return true
 end
-local MAX_PET_ID = 2000000000
+local MAX_PET_ID = Config.MaxPetId
 local function int(value, default, minimum, maximum)
     if typeof(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
         return default
@@ -492,6 +492,8 @@ local function sync(player, trackMutation)
     setPlayerAttribute(player, "AutoTapUnlocked", p.Rebirths >= Config.AutoTap.UnlockRebirths)
     setPlayerAttribute(player, "PetBonus", bonus)
     setPlayerAttribute(player, "PetCount", #p.Pets)
+    -- Preview of the ID bound for hatch MAX. Never trusted on the server.
+    setPlayerAttribute(player, "NextPetId", p.NextPetId)
     setPlayerAttribute(player, "EquippedCount", #p.Equipped)
     setPlayerAttribute(player, "World", p.World)
     setPlayerAttribute(player, "ChestDay", p.ChestDay)
@@ -800,12 +802,25 @@ local function tutorialAdvance(player, p, kind)
         VisualEvent:FireClient(player, {Type = "TutorialStep", Step = p.TutorialStep})
     end
 end
--- Server-authoritative single and triple hatch. All costs/capacity are checked
--- before spending; no client-selected species, chance or price are accepted.
+-- Server-authoritative single, triple and MAX hatch. The MAX quote is
+-- derived from the server profile and capped to ten eggs per request.
+-- Never accept arbitrary client counts, egg IDs, drop chances or prices.
 local function hatch(player, p, quantity)
-    if quantity ~= 1 and quantity ~= Config.MaxHatchBatch then return false end
+    local isMax = quantity == "MAX"
+    if not isMax and quantity ~= 1 and quantity ~= Config.MaxHatchBatch then
+        return false
+    end
     local egg = Config.EggForWorld(p.World)
     if not egg then return false end
+    if isMax then
+        local _, affordable = Config.HatchMaxQuote(egg.Price, p.Clicks,
+            #p.Pets, p.NextPetId)
+        if affordable < 1 then
+            notify(player, "MAX: не хватает кликов, места или свободных ID")
+            return false
+        end
+        quantity = affordable
+    end
     local totalCost = egg.Price * quantity
     if #p.Pets + quantity > Config.MaxPetInventory then
         notify(player, "Недостаточно места для " .. quantity .. " питомцев")
@@ -830,7 +845,7 @@ local function hatch(player, p, quantity)
         table.insert(results, selected)
     end
     p.Clicks -= totalCost
-    for _, selected in ipairs(results) do
+    for i, selected in ipairs(results) do
         local petId = p.NextPetId
         table.insert(p.Pets, {Id = petId, Species = selected.Id})
         if #p.Equipped < Config.MaxEquippedPets then
@@ -840,7 +855,12 @@ local function hatch(player, p, quantity)
         p.HatchedTotal = math.min(Config.MaxTotalClicks, p.HatchedTotal + 1)
         addQuest(p, "Hatch")
         countError("EggsOpened")
-        VisualEvent:FireClient(player, {Type = "Hatch", Species = selected.Id})
+        -- Ten simultaneous hatch effects overwhelm lower-end mobile devices.
+        -- Keep the visual burst to the existing triple-hatch limit; all pets,
+        -- per-egg quests and achievements are still processed on the server.
+        if not isMax or i <= Config.MaxHatchBatch then
+            VisualEvent:FireClient(player, {Type = "Hatch", Species = selected.Id})
+        end
     end
     tutorialAdvance(player, p, "Hatch")
     notify(player, quantity == 1 and ("Новый питомец: " .. results[1].Name)
@@ -1125,8 +1145,11 @@ local function handleAction(player, actionName, argument)
             notify(player, "Перерождение! Получены кристаллы")
             VisualEvent:FireClient(player, {Type = "Rebirth"})
         end
-    elseif actionName == "Hatch" or actionName == "Hatch3" then
-        changed = hatch(player, p, actionName == "Hatch3" and Config.MaxHatchBatch or 1)
+    elseif actionName == "Hatch" or actionName == "Hatch3"
+        or actionName == "HatchMax" then
+        local count = actionName == "HatchMax" and "MAX"
+            or (actionName == "Hatch3" and Config.MaxHatchBatch or 1)
+        changed = hatch(player, p, count)
         petsChanged, progressChanged = changed, changed
     elseif actionName == "ToggleEquip" then
         changed = equip(player, p, argument)
