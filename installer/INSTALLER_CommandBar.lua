@@ -1,4 +1,4 @@
--- GROWLIVO Alpha 0.9.34 / Command Bar Installer (EDIT mode only)
+-- GROWLIVO Alpha 0.9.35 / Command Bar Installer (EDIT mode only)
 local RunService = game:GetService("RunService")
 assert(not RunService:IsRunning(), "[GROWLIVO] Stop Play before installation")
 local targets = {
@@ -7,9 +7,9 @@ local targets = {
     StarterPlayerScripts = game:GetService("StarterPlayer"):WaitForChild("StarterPlayerScripts"),
 }
 local packages = {
-    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.34
+    {name="GrowlivoConfig", className="ModuleScript", target="ReplicatedStorage", source=[==[-- GROWLIVO / Shared economy and progression config / Alpha 0.9.35
 local Config = {}
-Config.Version = "Alpha 0.9.34"
+Config.Version = "Alpha 0.9.35"
 Config.ProfileVersion = 7
 Config.MaxSerializedProfileBytes = 3000000 -- under the DataStore value limit; conservative safety margin
 Config.TutorialClickGoal = 20
@@ -23,6 +23,9 @@ Config.MaxClicksPerSecond = 8
 -- Free progression feature: 2 rebirths unlocks 1 server-owned tap every 2 sec.
 -- Session toggle only: no purchases, no client-supplied tap counts, no new save fields.
 Config.AutoTap = {UnlockRebirths = 2, IntervalSeconds = 2}
+-- Unlockable, session-only automation. One server-priced egg every 12 seconds.
+-- Not a persistent setting: the player must opt in again each session.
+Config.AutoHatch = {UnlockRebirths = 5, IntervalSeconds = 12}
 -- Server-only streaks from accepted manual taps; no new persistent fields.
 Config.TapCombo = {WindowSeconds = 2.5, MaxStreak = 50,
     Tiers = {{Taps = 10, Multiplier = 1.10}, {Taps = 25, Multiplier = 1.25},
@@ -774,7 +777,7 @@ else
 end
 return Storage
 ]==]},
-    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.34
+    {name="GrowlivoServer", className="Script", target="ServerScriptService", source=[==[-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.35
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -841,6 +844,9 @@ local runeSessions = {}
 -- Auto tap state is session-only and keyed by player. Server controls all awards.
 local autoTapEnabled = {}
 local nextAutoTap = {}
+-- No new DataStore fields: automation is opted into per player session.
+local autoHatchEnabled = {}
+local nextAutoHatch = {}
 -- Per-session combo: the client cannot submit streak counts or reward amounts.
 local tapCombos = {}
 local function recordManualCombo(player)
@@ -1266,6 +1272,7 @@ local function sync(player, trackMutation)
     setPlayerAttribute(player, "TapLevel", p.TapLevel)
     setPlayerAttribute(player, "Rebirths", p.Rebirths)
     setPlayerAttribute(player, "AutoTapUnlocked", p.Rebirths >= Config.AutoTap.UnlockRebirths)
+    setPlayerAttribute(player, "AutoHatchUnlocked", p.Rebirths >= Config.AutoHatch.UnlockRebirths)
     setPlayerAttribute(player, "PetBonus", bonus)
     setPlayerAttribute(player, "PetCount", #p.Pets)
     -- Preview of the ID bound for hatch MAX. Never trusted on the server.
@@ -1581,7 +1588,7 @@ end
 -- Server-authoritative single, triple and MAX hatch. The MAX quote is
 -- derived from the server profile and capped to ten eggs per request.
 -- Never accept arbitrary client counts, egg IDs, drop chances or prices.
-local function hatch(player, p, quantity)
+local function hatch(player, p, quantity, silent)
     local isMax = quantity == "MAX"
     if not isMax and quantity ~= 1 and quantity ~= Config.MaxHatchBatch then
         return false
@@ -1639,8 +1646,10 @@ local function hatch(player, p, quantity)
         end
     end
     tutorialAdvance(player, p, "Hatch")
-    notify(player, quantity == 1 and ("Новый питомец: " .. results[1].Name)
-        or ("Открыто яиц: " .. quantity .. "! Инвентарь обновлён"))
+    if not silent then
+        notify(player, quantity == 1 and ("Новый питомец: " .. results[1].Name)
+            or ("Открыто яиц: " .. quantity .. "! Инвентарь обновлён"))
+    end
     return true
 end
 local function equip(player, p, requestedId)
@@ -1885,7 +1894,19 @@ local function handleAction(player, actionName, argument)
         if dayChanged then queueEvent(player) end
     end
     local changed, petsChanged, progressChanged, uiChanged = false, false, false, false
-    if actionName == "SetSetting" then
+    if actionName == "ToggleAutoHatch" then
+        if p.Rebirths < Config.AutoHatch.UnlockRebirths then
+            notify(player, "Автояйцо откроется после " .. Config.AutoHatch.UnlockRebirths .. " перерождений")
+            return
+        end
+        local enabled = autoHatchEnabled[player] ~= true
+        autoHatchEnabled[player] = enabled or nil
+        nextAutoHatch[player] = enabled and (os.clock() + Config.AutoHatch.IntervalSeconds) or nil
+        setPlayerAttribute(player, "AutoHatchEnabled", enabled)
+        notify(player, enabled and "Автояйцо включено: 1 яйцо каждые 12 секунд"
+            or "Автояйцо выключено")
+        return
+    elseif actionName == "SetSetting" then
         -- Only named boolean preferences may be written by clients.
         if typeof(argument) ~= "table" or typeof(argument.Key) ~= "string"
             or typeof(argument.Value) ~= "boolean" then return end
@@ -2197,6 +2218,8 @@ local function onJoin(player)
     player:SetAttribute("DataMode", Storage.Mode)
     player:SetAttribute("AutoTapEnabled", false)
     player:SetAttribute("AutoTapUnlocked", false)
+    player:SetAttribute("AutoHatchEnabled", false)
+    player:SetAttribute("AutoHatchUnlocked", false)
     player:SetAttribute("TapComboCount", 0)
     player:SetAttribute("TapComboMultiplier", 1)
     player:SetAttribute("TapComboExpiresAt", 0)
@@ -2298,6 +2321,7 @@ Players.PlayerRemoving:Connect(function(player)
     nextAutosave[player], recoveringSave[player], retryAttempts[player] = nil, nil, nil
     remoteBuckets[player], pendingTeleport[player], runeSessions[player] = nil, nil, nil
     autoTapEnabled[player], nextAutoTap[player], tapCombos[player] = nil, nil, nil
+    autoHatchEnabled[player], nextAutoHatch[player] = nil, nil
     -- Preserve finalizing[player] == "Done" for a concurrently running BindToClose.
     -- Weak player keys release this marker automatically after the Player is GC'd.
 end)
@@ -2329,6 +2353,37 @@ task.spawn(function()
                         awardTap(player, p, false)
                     end
                 end
+            end
+        end
+
+        -- Automatic eggs are purchased through the exact same authoritative
+        -- hatch() path as manual eggs. Never accept client counts, prices or
+        -- probabilities. No catch-up after a delayed scheduler iteration.
+        for player, enabled in pairs(autoHatchEnabled) do
+            if enabled and now >= (nextAutoHatch[player] or math.huge) then
+                nextAutoHatch[player] = now + Config.AutoHatch.IntervalSeconds
+                local p = profiles[player]
+                if p and isReady(player) and player.Parent == Players
+                    and p.Rebirths >= Config.AutoHatch.UnlockRebirths then
+                    local character = player.Character
+                    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                    if humanoid and humanoid.Health > 0 then
+                        local egg = Config.EggForWorld(p.World)
+                        -- Insufficient balance, capacity and ID exhaustion end
+                        -- the run rather than spamming failed hatch attempts.
+                        if not egg or p.Clicks < egg.Price or #p.Pets >= Config.MaxPetInventory
+                            or p.NextPetId > MAX_PET_ID then
+                            autoHatchEnabled[player], nextAutoHatch[player] = nil, nil
+                            setPlayerAttribute(player, "AutoHatchEnabled", false)
+                            notify(player, "Автояйцо остановлено: недостаточно кликов или места")
+                        elseif hatch(player, p, 1, true) then
+                            sync(player)
+                            pushPets(player)
+                            pushProgress(player)
+                        end
+                    end
+                end
+                -- SaveRetry, logout and death never produce delayed bonus eggs.
             end
         end
     end
@@ -3024,7 +3079,7 @@ Lighting.OutdoorAmbient = Color3.fromRGB(135, 176, 215)
 world:SetAttribute("WorldReady", true)
 print("[GROWLIVO] World built: Sky Crown + Crystal Vale + Aurora Grove + Royal Decor / " .. Config.Version)
 ]==]},
-    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.34
+    {name="GrowlivoClient", className="LocalScript", target="StarterPlayerScripts", source=[==[-- GROWLIVO / Mobile-friendly clicker and pet inventory UI / Alpha 0.9.35
 -- StarterPlayer > StarterPlayerScripts > GrowlivoClient [LocalScript]
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -3196,19 +3251,24 @@ close.Size = UDim2.fromOffset(43, 38)
 close.ZIndex = 12
 local hatch = button("Hatch", modal, "🥚 ОТКРЫТЬ ЯЙЦО", BLUE)
 hatch.Position = UDim2.new(0, 12, 0, 60)
-hatch.Size = UDim2.new(0.5, -14, 0, 53)
+hatch.Size = UDim2.new(0.37, -14, 0, 53)
 hatch.TextSize = 13
 hatch.ZIndex = 12
 local hatch3 = button("Hatch3", modal, "🥚 ×3", GOLD)
-hatch3.Position = UDim2.new(0.5, 4, 0, 60)
-hatch3.Size = UDim2.new(0.25, -9, 0, 53)
+hatch3.Position = UDim2.new(0.37, 4, 0, 60)
+hatch3.Size = UDim2.new(0.20, -9, 0, 53)
 hatch3.TextSize = 12
 hatch3.ZIndex = 12
 local hatchMax = button("HatchMax", modal, "🥚 MAX", GOLD)
-hatchMax.Position = UDim2.new(0.75, 1, 0, 60)
-hatchMax.Size = UDim2.new(0.25, -13, 0, 53)
+hatchMax.Position = UDim2.new(0.57, 1, 0, 60)
+hatchMax.Size = UDim2.new(0.20, -9, 0, 53)
 hatchMax.TextSize = 11
 hatchMax.ZIndex = 12
+local autoHatch = button("AutoHatch", modal, "🔒 АВТО", GOLD)
+autoHatch.Position = UDim2.new(0.77, -2, 0, 60)
+autoHatch.Size = UDim2.new(0.23, -10, 0, 53)
+autoHatch.TextSize = 11
+autoHatch.ZIndex = 12
 local odds = text("Odds", modal, "Шансы выпадения", 12, MUTED)
 odds.Position = UDim2.new(0, 12, 0, 118)
 odds.Size = UDim2.new(1, -24, 0, 37)
@@ -3737,6 +3797,21 @@ local function update()
         autoTapButton.Text = enabled and "🤖 АВТОКЛИК • ВКЛ" or "🤖 АВТОКЛИК • ВЫКЛ"
         autoTapButton.BackgroundColor3 = enabled and BLUE or GOLD
     end
+    local autoHatchUnlocked = player:GetAttribute("AutoHatchUnlocked") == true
+    local autoHatchEnabled = player:GetAttribute("AutoHatchEnabled") == true
+    local autoHatchReady = autoHatchUnlocked and player:GetAttribute("DataStatus") == "Ready"
+        and player:GetAttribute("DataReady") == true
+    autoHatch.Active = autoHatchReady
+    autoHatch.AutoButtonColor = autoHatchReady
+    if not autoHatchUnlocked then
+        autoHatch.Text = "🔒 АВТО\n" .. Config.AutoHatch.UnlockRebirths .. " 🔄"
+    elseif not autoHatchReady then
+        autoHatch.Text = autoHatchEnabled and "🤖 АВТО\nПАУЗА" or "🤖 АВТО\nНЕТ"
+    else
+        autoHatch.Text = autoHatchEnabled and "🤖 АВТО\nВКЛ" or "🤖 АВТО\nВЫКЛ"
+    end
+    autoHatch.BackgroundColor3 = not autoHatchReady and MUTED
+        or (autoHatchEnabled and BLUE or GOLD)
     if player:GetAttribute("DataStatus") == "SaveRetry" then
         toast.Text = "Сохранение недоступно: действия приостановлены"
     elseif player:GetAttribute("DataStatus") == "Ready"
@@ -3806,7 +3881,7 @@ local function resize()
         modal.Size = UDim2.new(1, -24, 0, math.min(h - 28, 570))
         heading.TextSize = 18
         hatch.TextSize = 11
-        hatch3.TextSize, hatchMax.TextSize = 10, 10
+        hatch3.TextSize, hatchMax.TextSize, autoHatch.TextSize = 10, 10, 10
         search.TextSize = 11
         sortButton.TextSize = 10
         equippedFilter.TextSize = 10
@@ -3849,7 +3924,7 @@ local function resize()
         modal.Size = UDim2.fromOffset(math.min(w - 90, 560), math.min(h - 80, 590))
         heading.TextSize = 22
         hatch.TextSize = 13
-        hatch3.TextSize, hatchMax.TextSize = 12, 11
+        hatch3.TextSize, hatchMax.TextSize, autoHatch.TextSize = 12, 11, 11
         search.TextSize = 12
         sortButton.TextSize = 11
         equippedFilter.TextSize = 11
@@ -3949,6 +4024,9 @@ end)
 hatchMax.Activated:Connect(function()
     if ready() and hatchMax.Active then Action:FireServer("HatchMax") end
 end)
+autoHatch.Activated:Connect(function()
+    if ready() and autoHatch.Active then Action:FireServer("ToggleAutoHatch") end
+end)
 best.Activated:Connect(function()
     clearCleanupConfirmation()
     if ready() then Action:FireServer("EquipBest") end
@@ -4046,7 +4124,7 @@ local function scheduleUpdate()
         if gui.Parent then update() end
     end)
 end
-for _, key in ipairs({"Clicks", "Gems", "Rebirths", "TapLevel", "ClickPower", "PetBonus", "PetCount", "NextPetId", "DataReady", "SavingEnabled", "DataStatus", "World", "AutoTapEnabled", "AutoTapUnlocked"}) do
+for _, key in ipairs({"Clicks", "Gems", "Rebirths", "TapLevel", "ClickPower", "PetBonus", "PetCount", "NextPetId", "DataReady", "SavingEnabled", "DataStatus", "World", "AutoTapEnabled", "AutoTapUnlocked", "AutoHatchEnabled", "AutoHatchUnlocked"}) do
     player:GetAttributeChangedSignal(key):Connect(scheduleUpdate)
 end
 player:GetAttributeChangedSignal("DataReady"):Connect(function()
@@ -7009,4 +7087,4 @@ for _, item in ipairs(obsoleteDiagnostics) do
         print("[GROWLIVO] Removed old diagnostic: " .. item.name)
     end
 end
-print("[GROWLIVO] Alpha 0.9.34 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
+print("[GROWLIVO] Alpha 0.9.35 CLEAN installed: 24 game scripts. Unpublished Studio = temporary data.")
