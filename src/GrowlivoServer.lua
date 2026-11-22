@@ -1,4 +1,4 @@
--- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.36
+-- GROWLIVO / Economy, pets, worlds, daily goals, persistence / Alpha 0.9.37
 -- ServerScriptService > GrowlivoServer [Script]
 -- Only server mutates player balances, ownership, unlocks, quests and achievements.
 local Players = game:GetService("Players")
@@ -903,8 +903,26 @@ local function equipBest(player, p)
         if bonusA == bonusB then return a.Id < b.Id end
         return bonusA > bonusB
     end)
+    local desired = {}
+    for i = 1, math.min(#sorted, Config.MaxEquippedPets) do
+        table.insert(desired, sorted[i].Id)
+    end
+    -- Equipping the same set is a no-op even if its order differs. Do not
+    -- dirty DataStore or fire an inventory refresh for an identical loadout.
+    local unchanged = #desired == #p.Equipped
+    if unchanged then
+        local currentlyEquipped = {}
+        for _, id in ipairs(p.Equipped) do currentlyEquipped[id] = true end
+        for _, id in ipairs(desired) do
+            if not currentlyEquipped[id] then unchanged = false break end
+        end
+    end
+    if unchanged then
+        notify(player, "Лучшие питомцы уже экипированы")
+        return false
+    end
     table.clear(p.Equipped)
-    for i = 1, math.min(#sorted, Config.MaxEquippedPets) do table.insert(p.Equipped, sorted[i].Id) end
+    for _, id in ipairs(desired) do table.insert(p.Equipped, id) end
     notify(player, "Экипированы лучшие питомцы")
     return true
 end

@@ -96,8 +96,18 @@ def check() -> None:
     assert 'readyToBuy and maxCount >= entry.Count' in CLIENT, (
         "Egg buttons do not share affordability preview"
     )
+    # Accidental destructive actions and redundant equip writes.
+    assert 'rebirthPending = true' in CLIENT
+    assert 'rebirthTarget = attr("Rebirths")' in CLIENT
+    assert 'rebirth.Text = "⚠ ПОДТВЕРДИТЬ\\nСБРОС УЛУЧШЕНИЙ"' in CLIENT
+    assert 'if ticket == rebirthNonce and rebirthPending then' in CLIENT
+    assert 'if release.Parent and release.Text == "..." then' in CLIENT
+    assert 'release.Active = true' in CLIENT
+    assert 'if unchanged then' in SERVER and (
+        'notify(player, "Лучшие питомцы уже экипированы")' in SERVER
+    ), "Redundant equip actions should not create dirty snapshots"
     print(f"OK: {len(worlds)} worlds, {len(eggs)} eggs, "
-          f"{len(pets)} obtainable pets; auto hatch static contracts")
+          f"{len(pets)} obtainable pets; automation and safety UI static contracts")
 
 
 if __name__ == "__main__":
